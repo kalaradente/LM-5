@@ -63,9 +63,11 @@ the Pi never flashes the board, it only streams `golf.cfg` at runtime.
 
 ## Notes
 
-- The `openflight_upstream/src/openflight/server.py` `simulate_custom_shot`
-  patch (from LM-1) is required for `shot_simulator.py --live`. If you clone
-  a fresh `openflight_upstream`, re-apply it, or copy the patched file from
-  LM-1.
+- `shot_simulator.py --live` needs one small addition to upstream's
+  `server.py` (a `simulate_custom_shot` WebSocket handler). It lives in
+  `patches/simulate_custom_shot.patch` and the setup wizard applies it
+  automatically after cloning `openflight_upstream`. It's purely additive —
+  nothing in upstream's behavior changes. `run_iwr6843.py` (real hardware)
+  and the offline sims don't need it.
 - No LICENSE yet. OpenFlight is AGPL-3.0; since this integrates with it,
   consider matching (see `TODO.md`).

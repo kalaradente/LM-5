@@ -50,15 +50,29 @@ ask_yn() {
     [[ "$reply" =~ ^[Yy]$ ]]
 }
 
-# ---- 0. Vendor openflight_upstream ---------------------------------------
+# ---- 0. Vendor openflight_upstream + apply our patch ---------------------
 
 log "Step 0: upstream OpenFlight checkout"
+PATCH="$REPO_ROOT/patches/simulate_custom_shot.patch"
 if [ -d "$UPSTREAM_DIR" ]; then
     log "$UPSTREAM_DIR already present, leaving it as-is."
 else
     log "Cloning $UPSTREAM_URL -> $UPSTREAM_DIR ..."
     git clone --depth 1 "$UPSTREAM_URL" "$UPSTREAM_DIR"
     log "Cloned."
+    # Re-apply our only upstream change (the simulate_custom_shot handler that
+    # shot_simulator.py --live needs). Purely additive; see the patch + README.
+    # Skipped automatically if upstream already carries an equivalent change.
+    if [ -f "$PATCH" ]; then
+        if git -C "$UPSTREAM_DIR" apply --check "$PATCH" 2>/dev/null; then
+            git -C "$UPSTREAM_DIR" apply "$PATCH"
+            log "Applied simulate_custom_shot.patch (enables shot_simulator.py --live)."
+        else
+            warn "simulate_custom_shot.patch didn't apply cleanly (upstream may have"
+            warn "moved on). --live may not work until it's re-applied by hand;"
+            warn "run_iwr6843.py and offline sims are unaffected."
+        fi
+    fi
 fi
 
 # ---- 1. Python deps -------------------------------------------------------

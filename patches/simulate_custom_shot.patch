@@ -1,0 +1,134 @@
+diff --git a/src/openflight/server.py b/src/openflight/server.py
+index 68ae180..22a5bae 100644
+--- a/src/openflight/server.py
++++ b/src/openflight/server.py
+@@ -1426,6 +1426,31 @@ def handle_simulate_shot():
+         monitor.simulate_shot()
+ 
+ 
++@socketio.on("simulate_custom_shot")
++def handle_simulate_custom_shot(data):
++    """Simulate a shot from explicit launch conditions (only works in mock mode).
++
++    Payload: {"ball_speed_mph": float, "spin_rpm": float,
++              "launch_angle_deg": float, "side_angle_deg": float,
++              "spin_axis_deg": float, "club": str}
++    Any field can be omitted; omitted fields fall back to the same
++    TrackMan-based random generation as simulate_shot(). Used by the
++    plaintext shot simulator (see shot_simulator.py) to inject typed-in
++    launch conditions and have them rendered by the real UI + physics engine.
++    spin_axis_deg drives the fade/draw curve; side_angle_deg is just the
++    initial aim/push-pull direction, independent of the curve.
++    """
++    if monitor and isinstance(monitor, MockLaunchMonitor):
++        monitor.simulate_shot(
++            ball_speed=data.get("ball_speed_mph"),
++            spin_rpm=data.get("spin_rpm"),
++            launch_v=data.get("launch_angle_deg"),
++            launch_h=data.get("side_angle_deg"),
++            spin_axis=data.get("spin_axis_deg"),
++            club=data.get("club"),
++        )
++
++
+ @socketio.on("toggle_debug")
+ def handle_toggle_debug():
+     """Toggle debug mode on/off."""
+@@ -2432,8 +2457,37 @@ class MockLaunchMonitor:
+         """Stop mock monitoring."""
+         self._running = False
+ 
+-    def simulate_shot(self, ball_speed: float = None):
+-        """Simulate a shot for testing using realistic TrackMan-based values."""
++    def simulate_shot(
++        self,
++        ball_speed: float = None,
++        spin_rpm: float = None,
++        launch_v: float = None,
++        launch_h: float = None,
++        spin_axis: float = None,
++        club: str = None,
++    ):
++        """Simulate a shot for testing using realistic TrackMan-based values.
++
++        Any of ball_speed/spin_rpm/launch_v/launch_h/spin_axis left as None
++        is filled in with the usual random generation. When at least one of
++        spin_rpm/launch_v/launch_h/spin_axis is supplied explicitly (i.e. a
++        real person typed it in, e.g. via shot_simulator.py), the shot is
++        treated as "manual": full confidence, and carry is computed with the
++        same RK4 drag+Magnus physics engine used for ballistics-enabled real
++        shots (resolve_launch + simulate) instead of the table estimator.
++        spin_axis follows ballistics.py's convention (0 = pure backspin,
++        + = fade/slice, - = draw/hook) and drives the Magnus-curve direction;
++        it's independent of launch_h, which is just the initial aim/push-pull
++        direction.
++        """
++        manual = any(v is not None for v in (spin_rpm, launch_v, launch_h, spin_axis))
++
++        if club is not None:
++            try:
++                self._current_club = ClubType(club)
++            except ValueError:
++                pass
++
+         avg_speed, std_dev, smash = self._CLUB_BALL_SPEEDS.get(self._current_club, (120, 15, 1.35))
+ 
+         if ball_speed is None:
+@@ -2444,13 +2498,16 @@ class MockLaunchMonitor:
+ 
+         # Generate spin
+         avg_spin, spin_std = self._CLUB_SPIN.get(self._current_club, (5000, 800))
+-        spin_rpm = max(1000, random.gauss(avg_spin, spin_std))
++        if spin_rpm is None:
++            spin_rpm = max(1000, random.gauss(avg_spin, spin_std))
+ 
+         # Generate launch angle (vertical always positive, minimum 5°)
+         avg_launch, launch_std = self._CLUB_LAUNCH.get(self._current_club, (18.0, 3.0))
+-        launch_v = max(5.0, random.gauss(avg_launch, launch_std))
+-        launch_h = random.gauss(0, 2.0)
+-        launch_confidence = round(random.uniform(0.5, 0.95), 2)
++        if launch_v is None:
++            launch_v = max(5.0, random.gauss(avg_launch, launch_std))
++        if launch_h is None:
++            launch_h = random.gauss(0, 2.0)
++        launch_confidence = 1.0 if manual else round(random.uniform(0.5, 0.95), 2)
+ 
+         # Generate club angle of attack (negative for irons, near-zero for driver)
+         club_aoa = round(random.gauss(-4.0, 2.5), 1)
+@@ -2461,21 +2518,31 @@ class MockLaunchMonitor:
+             timestamp=datetime.now(),
+             club=self._current_club,
+             spin_rpm=spin_rpm,
+-            spin_confidence=random.choice([0.3, 0.6, 0.7, 0.9]),
++            spin_confidence=1.0 if manual else random.choice([0.3, 0.6, 0.7, 0.9]),
+             launch_angle_vertical=round(launch_v, 1),
+             launch_angle_horizontal=round(launch_h, 1),
+             launch_angle_confidence=launch_confidence,
+             launch_angle_vertical_confidence=launch_confidence,
+             launch_angle_horizontal_confidence=launch_confidence,
+-            launch_angle_vertical_source="mock",
+-            launch_angle_horizontal_source="mock",
+-            angle_source="mock",
++            launch_angle_vertical_source="manual" if manual else "mock",
++            launch_angle_horizontal_source="manual" if manual else "mock",
++            angle_source="manual" if manual else "mock",
+             club_angle_deg=club_aoa,
+             club_path_deg=round(random.uniform(-5.0, 5.0), 1),
+-            spin_axis_deg=round(launch_h - random.uniform(-5.0, 5.0), 1),
++            spin_axis_deg=round(spin_axis, 1) if spin_axis is not None
++            else round(launch_h - random.uniform(-5.0, 5.0), 1),
+             mode="mock",
+         )
+ 
++        if manual:
++            # Same choke point real ballistics-enabled shots use; pre-filling
++            # carry_spin_adjusted makes on_shot_detected's table-estimator
++            # fallback a no-op for this shot (see its `carry_spin_adjusted
++            # is None` gate).
++            conditions = resolve_launch(shot)
++            if conditions is not None:
++                shot.carry_spin_adjusted = simulate(conditions).carry_yards
++
+         self._shots.append(shot)
+ 
+         if self._shot_callback:
