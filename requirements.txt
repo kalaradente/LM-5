@@ -1,0 +1,16 @@
+# For shot_simulator.py and the openflight_iwr6843 package.
+numpy>=1.20.0
+scipy>=1.10.0
+pyserial>=3.5
+# Needed by shot_fusion.AudioRing (K-MC1 capture) -- run_iwr6843.py only.
+sounddevice>=0.4.6
+# Only needed for `shot_simulator.py --live` and `run_iwr6843.py` (both
+# import openflight.server, which needs the Flask/SocketIO stack).
+python-socketio[client]>=5.10.0
+flask>=3.1.3
+flask-cors>=6.0.2
+flask-socketio>=5.6.1
+eventlet>=0.35.0
+# Pi/Linux only (needs libasound) -- for openflight_iwr6843/gain.py.
+# Do not try to install this on macOS/dev machines; it will fail to build.
+pyalsaaudio>=0.9; sys_platform == "linux"

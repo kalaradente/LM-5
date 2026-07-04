@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+# Vendored clone of github.com/jewbetcha/openflight — has its own git history;
+# the setup wizard clones it. See README.md.
+openflight_upstream/
+# Machine-specific hardware IDs written by scripts/setup_wizard.sh
+hardware.env
+# Per-shot raw capture archives (radar + audio), written at runtime
+captures/
