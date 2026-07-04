@@ -73,10 +73,47 @@ Running list of open items. Newest relevant item first per section.
       computing launch/side angle. `MOUNT_TILT_DEG = 10.0` is a considered
       default (see golf.cfg's aoaFovCfg comment for the antenna-beamwidth
       reasoning) -- CALIBRATE against the actual built mount.
-- [ ] Wire `SessionConfig` into `IWR6843Source` (currently the geometry
-      side still uses hardcoded class constants for range gate / capture
-      window rather than reading from session config — only the spin side
-      is fully wired through `ShotFuser`).
+- [x] Wire `SessionConfig` into `IWR6843Source` and `ShotFuser`, end to end.
+      `IWR6843Source` now takes a `session=`: the software range gate (`_parse`)
+      and capture window (`run`) read from it, AND `configure()` rewrites the
+      three session-dependent golf.cfg CLI lines before sending them to the
+      chip (`cfarFovCfg` range = the hardware gate, `clutterRemoval`,
+      `cfarCfg` thresholdScale offset) — otherwise an outdoor gate extension
+      would be silently discarded at the chip. `ShotFuser` now takes a
+      `session=` too, so its measured-spin confidence floor (per ball type)
+      and audio slice window come from the session, and every published shot
+      is stamped with `environment`/`ball_type` tags. `run_iwr6843.py` builds
+      the session from new `--outdoor` / `--ball {plain,marked,rct}` flags and
+      threads it through `IWR6843Monitor`. Verified synthetically: cfg-line
+      rewriting for indoor vs outdoor+rct, and fuser floor/window/tags.
+      The `cfarCfg` thresholdScale dB semantics are **confirmed against the
+      primary TI source** (mmWave SDK User Guide 3.6 LTS p.28: "Threshold
+      scale in dB ... CUT > (Threshold scale converted from dB to Q8) + noise",
+      float, max 100 dB) -- so the field is dB and the log-domain detection
+      test is additive, making the `12 -> 9` (-3 dB) outdoor nudge a genuine
+      -3 dB loosen. Stable across mmWave SDK 3.x; only re-check if a different
+      major SDK line gets flashed (same caveat as golf.cfg's arg formats).
+- [x] **Corrected the K-MC1 wavelength constant** (`spin_decoder.WAVELENGTH`
+      and `spin_capture_simulator.WAVELENGTH`): was `0.0125` m (= 24.0 GHz),
+      now `0.012427` m (= 24.125 GHz), per the RFbeam K-MC1/K-MC1_LP datasheet
+      (fTX min/typ/max 24.050/24.150/24.250 GHz; Rx/antenna gain characterized
+      at nominal 24.125 GHz). The old value put a ~0.6% high bias on every
+      Doppler->speed number (`radial_speed_mps`). Spin RPM is unaffected (it
+      comes from envelope periodicity, not the carrier) — self-test still
+      PASSes at ~3000 rpm. Both files kept in sync so the sim round-trip holds.
+- [x] **"47 dB?" question raised during the datasheet pass — resolved, no
+      change needed.** The plain K-MC1 (our part) AC-output IF gain is **32 dB,
+      datasheet-confirmed** (RFbeam K-MC1 Rev J 11/2022 electrical-characteristics
+      table: `GIF_AC = 32 dB` for the _AC outputs, `GIF_DC = 0 dB` DC unbuffered).
+      The "47 dB" I flagged appears only in the K-MC1_**LP** variant's FCC block
+      diagram — a different part's annotation, and a block diagram does not
+      override our part's own spec table. "47" was never a real figure for the
+      K-MC1: it originated from an unverified web-search summary earlier and was
+      corrected by reading the primary datasheet (this is *the* incident behind
+      the "read primary datasheets, not search summaries" rule). `gain.py`'s
+      32 dB stands and its gain-staging note already reasons from it correctly.
+      (Real departing-ball signal LEVEL is still the open bench question — that
+      is a measurement, not a datasheet figure; see the gain-amplitude item.)
 - [ ] Fit real coefficients for `shot_fusion.infer_spin()` (currently a
       placeholder surface) once truth data exists.
 - [ ] Fit real per-ball-type `spin_conf_floor` values in `session.py`
@@ -88,9 +125,37 @@ Running list of open items. Newest relevant item first per section.
 
 ## Process
 
-- [ ] Diff `golf.cfg` against the actual `profile_*.cfg` shipped with
+- [x] TLV frame-header length: **committed to 40 bytes** (32-byte header +
+      8-byte magic word), 2026-07-04. Rationale: it's the value the mmWave
+      community reports consistently across forums/third-party parsers, it's
+      the de-facto standard OOB-demo header, and it matches summing TI's own
+      listed fields. TI's doc separately says 44 — treated as a later-SDK
+      variant. `FRAME_HEADER_LEN = 32` already encoded this; comment updated
+      to record the decision. Empirical check remains bring-up rung 2 (parser
+      vs TI Demo Visualizer); bump to 36 (44 total) only if rung 2 shows
+      garbage/missing points.
+
+- [~] Diff `golf.cfg` against the actual `profile_*.cfg` shipped with
       whatever mmWave SDK version ends up flashed on the board — CLI
-      argument counts vary by SDK release.
+      argument counts vary by SDK release. **Partially done 2026-07-04:**
+      audited all 16 commands against the mmWave SDK User Guide 3.6 LTS. 15
+      match the documented arg lists for our 2-TX x 4-RX design (channelCfg
+      15 5 0, adcCfg 2 1, adcbufCfg -1 0 1 1 1, profileCfg 14 args, chirpCfg
+      8 args x2, frameCfg 7, guiMonitor 7, cfarCfg 9, cfarFovCfg/aoaFovCfg/
+      multiObjBeamForming/clutterRemoval/calibDcRangeSig/extendedMaxVelocity
+      all as documented). All arg COUNTS check out, including
+      `compRangeBiasAndRxChanPhase`: I initially (wrongly) flagged its 25
+      values as a 3-TX/2-TX mismatch, but the xwr6843 mmw demo ALWAYS expects
+      12 (Re,Im) pairs = 25 values because the count is fixed by the device's
+      physical 3 TX x 4 RX = 12 virtual antennas, NOT by enabled TX (mmWave SDK
+      User Guide 3.6 LTS; and a stock xwr6843 config pairs the same 12-pair
+      line with channelCfg 15 5 0 = 2 TX). So the count is correct and would
+      NOT be rejected. **But the VALUES were a real bug:** our placeholder was
+      `0.0 1 0 0 0 ...` = unity on virtual antenna 0 and ZERO gain on the other
+      11, which nulls 11/12 channels and wrecks angle estimation. Fixed to TI's
+      identity/no-compensation default (`0.0` + twelve `1 0` pairs). Still
+      REPLACE with the board's own measured rangeBias/rxChanPhase string at
+      bring-up. Final per-SDK-version diff still pending once the board flashes.
 - [ ] Read OpenFlight's actual source/README once repo access happens, to
       confirm (rather than infer) the real reason for the sound trigger
       and rolling buffer, before posting anything publicly that

@@ -136,22 +136,42 @@ patch. On a dev machine, symlink it for testing:
   driver (Uniflash/CCS).
 - **Side-info dtype** (acf1fc3): SNR/noise are `uint16` per TI spec, was
   `int16`. Harmless in practice, fixed for correctness.
+- **K-MC1 wavelength off by 24.0 vs 24.125 GHz**: `WAVELENGTH` was `0.0125` m
+  (24.0 GHz); RFbeam datasheet nominal is 24.125 GHz -> `0.012427` m. ~0.6%
+  high bias on every Doppler->speed number (spin RPM unaffected). Fixed in
+  `spin_decoder.py` + `spin_capture_simulator.py`. Found via a "pull the
+  datasheet for our educated assumptions" pass (same pass that verified the
+  cfarCfg-in-dB semantics and audited golf.cfg's CLI arg counts).
+- **golf.cfg compRangeBiasAndRxChanPhase nulled 11/12 channels**: placeholder
+  was `0.0 1 0 0 0 ...` = unity on virtual antenna 0, ZERO gain on the other
+  11 -> would kill AoA (side/launch angle). Fixed to TI's identity default
+  (`0.0` + twelve `1 0` pairs). NB the 25-value count is correct for xwr6843
+  (12 virtual antennas, fixed by 3TX*4RX regardless of enabled TX) -- an
+  earlier "arg-count mismatch" flag was a false alarm, corrected. Still
+  replace with the board's measured string at bring-up.
 
 ---
 
 ## 7. Biggest OPEN / UNVERIFIED items (see TODO.md for full list)
 
-- **TLV frame-header length is unresolved**: code assumes 40 bytes (8 magic
-  + 32 header). TI's OOB-demo doc internally contradicts itself (lists
-  fields summing to 40, but states 44 total) — likely an SDK-version diff.
-  **Bring-up rung 2 (parser vs TI Demo Visualizer on a live stream) is the
-  check that resolves this** — wrong length = garbage/missing points.
+- **TLV frame-header length: DECIDED — 40 bytes** (8 magic + 32 header),
+  2026-07-04. Went with the mmWave community/forum consensus and de-facto
+  OOB-demo standard (also matches summing TI's own listed fields); TI's doc's
+  separate "44" is treated as a later-SDK variant. `FRAME_HEADER_LEN = 32`.
+  Still validated empirically at **bring-up rung 2 (parser vs TI Demo
+  Visualizer)** — wrong length = garbage/missing points; bump to 36 there if
+  it fails.
 - **Gain amplitude** for a real departing ball is unknown (datasheet gives
   impedance/gain but not real-target signal level). Bench-test question.
 - **`infer_spin` coefficients** and **`spin_conf_floor`** are placeholders
   awaiting real truth data.
-- **`SessionConfig` not wired into `IWR6843Source`** (geometry side uses
-  hardcoded constants).
+- **`SessionConfig` now fully wired** into `IWR6843Source` + `ShotFuser`
+  (geometry range gate/capture window, chip-side cfg rewriting in
+  `configure()`, spin floor/audio window, per-shot env/ball tags;
+  `run_iwr6843.py` has `--outdoor`/`--ball` flags). The `cfarCfg`
+  thresholdScale-in-dB semantics are confirmed against the primary TI source
+  (mmWave SDK User Guide 3.6 LTS p.28) — dB, float, max 100, additive in the
+  log-domain CUT test, so the outdoor -3 dB nudge is a real -3 dB loosen.
 - **SOP switch settings ARE now confirmed** from TI docs (see
   firmware-flashing.md): only S1.1 changes between flash/functional; SOP is
   boot-sensed (must reset after flipping).
