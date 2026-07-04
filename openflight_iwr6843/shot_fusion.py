@@ -26,8 +26,11 @@ try:
 except (ImportError, OSError):                        # allow offline replay
     sd = None
 
+from .session import SessionConfig
 from .spin_decoder import decode, FS
 
+# Defaults used only when no SessionConfig is supplied (matches the indoor
+# preset). With a session, ShotFuser reads these from it instead.
 SPIN_CONF_FLOOR = 0.35        # below this, fall back to inference
 AUDIO_PRE = 0.05              # s of audio before impact to include
 AUDIO_POST = 0.15             # s after
@@ -92,20 +95,29 @@ def infer_spin(geom: dict) -> Optional[float]:
 
 class ShotFuser:
     def __init__(self, publish: Callable[[dict], None],
-                 audio: Optional[AudioRing] = None):
+                 audio: Optional[AudioRing] = None,
+                 session: Optional[SessionConfig] = None):
         self.publish = publish
         self.audio = audio
+        # Spin-side session presets: measured-spin confidence floor (per ball
+        # type) and the audio slice window (widens outdoors). Default session
+        # reproduces the old module-constant behaviour for the audio window;
+        # the plain-ball floor rises 0.35 -> 0.55 once a session is active.
+        self.session = session or SessionConfig()
+        self.spin_conf_floor = self.session.spin_conf_floor
+        self.audio_pre, self.audio_post = self.session.spin_audio_window_s
 
     def on_geometry(self, geom: dict):
         shot = dict(geom)
         shot["spin_rpm"], shot["spin_source"], shot["spin_confidence"] = \
             None, None, 0.0
         if self.audio is not None:
-            z = self.audio.window(geom["t_impact"], AUDIO_PRE, AUDIO_POST)
+            z = self.audio.window(geom["t_impact"], self.audio_pre,
+                                  self.audio_post)
             self._archive_audio(z, geom.get("capture_id"))
             result = decode(z)
             if result.get("ok") and \
-                    result.get("confidence", 0) >= SPIN_CONF_FLOOR:
+                    result.get("confidence", 0) >= self.spin_conf_floor:
                 shot.update(spin_rpm=round(result["spin_rpm"]),
                             spin_source="measured",
                             spin_confidence=result["confidence"])
@@ -119,6 +131,8 @@ class ShotFuser:
         ax = geom.get("lateral_accel_mps2")
         shot["spin_axis_hint_deg"] = round(np.degrees(np.arctan2(ax, 9.81)), 1) \
             if ax is not None else None
+        # Stamp environment/ball_type onto every record for validation grouping.
+        shot.update(self.session.tags())
         self.publish(shot)
 
     def _archive_audio(self, z, capture_id, directory="captures"):

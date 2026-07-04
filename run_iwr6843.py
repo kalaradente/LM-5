@@ -66,6 +66,7 @@ else:
 from openflight_iwr6843.iwr6843_source import IWR6843Source  # noqa: E402
 from openflight_iwr6843.shot_fusion import AudioRing, ShotFuser  # noqa: E402
 from openflight_iwr6843.gspro_adapter import GSProClient  # noqa: E402
+from openflight_iwr6843.session import SessionConfig  # noqa: E402
 
 import openflight.server as ofserver  # noqa: E402
 from openflight.launch_monitor import ClubType, Shot  # noqa: E402
@@ -121,14 +122,18 @@ class IWR6843Monitor:
     controls keep working against real hardware."""
 
     def __init__(self, geom_port: str, data_port: str, cfg_path: str,
-                 audio_device=None, gspro: Optional[GSProClient] = None):
+                 audio_device=None, gspro: Optional[GSProClient] = None,
+                 session: Optional[SessionConfig] = None):
         self._shots: List[Shot] = []
         self._current_club = ClubType.DRIVER
         self._shot_callback: Optional[Callable[[Shot], None]] = None
+        self.session = session or SessionConfig()
         self.audio = AudioRing(device=audio_device)
-        self.fuser = ShotFuser(publish=self._on_fused, audio=self.audio)
+        self.fuser = ShotFuser(publish=self._on_fused, audio=self.audio,
+                                session=self.session)
         self.source = IWR6843Source(geom_port, data_port, cfg_path,
-                                     on_geometry=self.fuser.on_geometry)
+                                     on_geometry=self.fuser.on_geometry,
+                                     session=self.session)
         self._thread: Optional[threading.Thread] = None
         self.gspro = gspro
 
@@ -217,6 +222,11 @@ def main() -> None:
     parser.add_argument("--audio-device", default=env.get("AUDIO_DEVICE"),
                          help="sounddevice device name/index for the HiFiBerry capture")
     parser.add_argument("--club", default="driver")
+    parser.add_argument("--outdoor", action="store_true",
+                         help="outdoor session preset (wider range gate + capture "
+                              "window, looser CFAR, no clutter removal). Default: indoor.")
+    parser.add_argument("--ball", choices=["plain", "marked", "rct"], default="plain",
+                         help="ball type; sets the measured-spin confidence floor")
     parser.add_argument("--ballistics", action="store_true",
                          help="use the RK4 drag+Magnus physics engine for carry")
     parser.add_argument("--host", default="0.0.0.0")
@@ -240,6 +250,9 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO,
                          format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
+    session = SessionConfig("outdoor" if args.outdoor else "indoor", args.ball)
+    log.info("[session] %s", session.summary())
+
     ofserver.ballistics_enabled = args.ballistics
     ofserver.mock_mode = False
 
@@ -253,7 +266,7 @@ def main() -> None:
                 radar_port=f"{args.cli_port},{args.geom_port}",
                 camera_enabled=False,
                 config={"cfg": args.cfg, "audio_device": args.audio_device,
-                        "ballistics": args.ballistics},
+                        "ballistics": args.ballistics, **session.tags()},
                 mode="iwr6843",
             )
 
@@ -277,7 +290,8 @@ def main() -> None:
             gspro = None
 
     monitor = IWR6843Monitor(args.cli_port, args.geom_port, args.cfg,
-                              audio_device=args.audio_device, gspro=gspro)
+                              audio_device=args.audio_device, gspro=gspro,
+                              session=session)
     monitor.set_club(club)
     ofserver.monitor = monitor
     monitor.start(shot_callback=ofserver.on_shot_detected)
@@ -285,6 +299,7 @@ def main() -> None:
     print("=" * 50)
     print("  OpenFlight -- IWR6843 + K-MC1 hardware")
     print("=" * 50)
+    print(f"Session: {session.summary()}")
     print(f"Ballistics: {'ENABLED' if args.ballistics else 'DISABLED (table fallback)'}")
     print(f"GSPro: {'connected -> ' + args.gspro_host if gspro else 'not configured'}")
     print(f"Server starting at http://{args.host}:{args.web_port}")

@@ -20,21 +20,23 @@ import numpy as np
 import serial
 
 from .kalman import BallTracker
+from .session import SessionConfig
 
 # Cross-checked against TI's "Understanding the Out of Box Demo Data Output"
 # doc. Magic word, both TLV type IDs, and the Detected Points TLV layout
 # (16 bytes/point: x,y,z,doppler as 4x float32, same field order) all match
-# exactly. FRAME_HEADER_LEN below is the one open question: our 32 bytes
-# (+ the 8-byte magic word = 40 total) matches summing that doc's own listed
-# fields, but the SAME doc separately states the frame header is 44 bytes
-# total -- an internal inconsistency in that source, most likely explained
-# by an SDK-version difference (a field added in some later SDK revision,
-# e.g. numStaticDetectedObj) rather than either number being simply wrong.
-# NOT resolved from documentation alone -- but bring-up rung 2 (this parser
-# against a live stream, positions must match the TI Demo Visualizer) is
-# exactly the empirical check that catches a wrong header length: it would
-# show up as garbage/missing points, not a subtle numeric error. Diff this
-# against your specific flashed SDK version's demo source if rung 2 fails.
+# exactly. FRAME_HEADER_LEN is 32 bytes (+ the 8-byte magic word = 40 total).
+# DECISION (2026-07-04): commit to 40. That is the value the mmWave community
+# reports consistently across forum threads and third-party parsers, it is the
+# de-facto standard OOB-demo header, and it matches summing that TI doc's own
+# listed fields. The same doc separately calls the frame header 44 bytes -- an
+# internal inconsistency most likely from an SDK-version difference (a field
+# added in a later revision, e.g. numStaticDetectedObj); we go with 40 unless
+# the board proves otherwise. Bring-up rung 2 (this parser against a live
+# stream, positions must match the TI Demo Visualizer) is the empirical check:
+# a wrong header length shows up as garbage/missing points, not a subtle
+# numeric error. If rung 2 fails, diff against your flashed SDK's demo source
+# and bump FRAME_HEADER_LEN to 36 (44 total) there.
 MAGIC_WORD = b"\x02\x01\x04\x03\x06\x05\x08\x07"
 FRAME_HEADER_FMT = "<8I"
 FRAME_HEADER_LEN = 32
@@ -54,11 +56,12 @@ class IWR6843Source:
     BALL_MIN_SPEED = 7.6    # 17 mph — chip/putt shots trigger and classify as ball
     CLUB_MIN_SPEED = 4.0    # ~9 mph, kept below BALL_MIN_SPEED so slow-shot
                             # points still classify as club rather than ball
-    CAPTURE_WINDOW = 0.20
     PRE_ROLL = 0.15
     MIN_BALL_FIXES = 4
-    RANGE_GATE = (0.3, 6.0)
     COOLDOWN = 2.0
+    # NOTE: the range gate and capture window are NOT class constants any more
+    # -- they come from the active SessionConfig (indoor/outdoor presets), set
+    # per instance in __init__ as self.range_gate / self.capture_window.
     # Physical mount tilt (shimmed up at the front, see parts list wiring
     # summary) -- the sensor's own z axis is NOT vertical unless this is 0.
     # 10 deg centers the antenna's measured elevation beamwidth on
@@ -71,12 +74,20 @@ class IWR6843Source:
 
     def __init__(self, cli_port: str, data_port: str, cfg_path: str,
                  on_geometry: Callable[[dict], None],
-                 archive_dir: Optional[str] = "captures"):
+                 archive_dir: Optional[str] = "captures",
+                 session: Optional[SessionConfig] = None):
         self.cli = serial.Serial(cli_port, 115200, timeout=1)
         self.data = serial.Serial(data_port, 921600, timeout=0.05)
         self.cfg_path = cfg_path
         self.on_geometry = on_geometry
         self.archive_dir = archive_dir
+        # Session presets drive the geometry channel's environment-dependent
+        # parameters. Default indoor config keeps prior hardcoded behaviour
+        # (gate 0.3-6.0 m, 0.20 s window) so existing callers/self-tests are
+        # unchanged.
+        self.session = session or SessionConfig()
+        self.range_gate = self.session.range_gate
+        self.capture_window = self.session.capture_window_s
         self._buf = bytearray()
         self._pre_roll: deque[Frame] = deque()
         self._running = False
@@ -90,9 +101,48 @@ class IWR6843Source:
                 line = line.strip()
                 if not line or line.startswith("%"):
                     continue
+                line = self._apply_session(line)
                 self.cli.write((line + "\n").encode())
                 time.sleep(0.02)
                 self.cli.read(self.cli.in_waiting or 1)
+
+    def _apply_session(self, line: str) -> str:
+        """Rewrite the three golf.cfg CLI lines that depend on the session
+        (indoor/outdoor) before they're sent to the chip; every other line
+        passes through verbatim. This is the chip-side half of the range gate:
+        the software gate in _parse() can only *tighten* what the chip emits,
+        so an outdoor gate extension (6->15 m) is meaningless unless the
+        chip's own cfarFovCfg range is widened here too. All three are
+        re-checked at bring-up rung 3 against the flashed SDK's cfg format."""
+        tok = line.split()
+        if not tok:
+            return line
+        key = tok[0]
+        # Range-direction FoV (procDirection 0) == the hardware range gate.
+        if key == "cfarFovCfg" and len(tok) >= 5 and tok[2] == "0":
+            rmin, rmax = self.range_gate
+            tok[3], tok[4] = f"{rmin:g}", f"{rmax:g}"
+            return " ".join(tok)
+        # Static-clutter subtraction: on indoors (cluttered bay), off outdoors.
+        if key == "clutterRemoval" and len(tok) >= 3:
+            tok[2] = "1" if self.session.clutter_removal else "0"
+            return " ".join(tok)
+        # CFAR thresholdScale (8th arg). Per the mmWave SDK User Guide 3.6 LTS
+        # p.28: "Threshold scale in dB using float representation ... the CUT
+        # comparison for log input is: CUT > (Threshold scale converted from dB
+        # to Q8) + (noise sum / 2^x) ... Maximum value allowed is 100dB". So
+        # the field is dB and the detection test is additive in the log domain:
+        # nudging it by session offset dB shifts the required CUT by exactly
+        # that many dB -- 0 indoor, looser (lower) outdoors. Clamp to [0,100]dB.
+        # (The dB semantics are stable across mmWave SDK 3.x; only re-check if
+        # the flashed SDK is a different major line -- see golf.cfg's note on
+        # per-version arg formats.)
+        if key == "cfarCfg" and len(tok) >= 9:
+            base = float(tok[8])
+            nudged = min(100.0, max(0.0, base + self.session.cfar_threshold_offset_db))
+            tok[8] = f"{nudged:g}"
+            return " ".join(tok)
+        return line
 
     # ---- TLV stream ------------------------------------------------------
 
@@ -151,7 +201,7 @@ class IWR6843Source:
         if points is None:
             return None
         r = np.linalg.norm(points[:, :3], axis=1)
-        keep = (r > self.RANGE_GATE[0]) & (r < self.RANGE_GATE[1])
+        keep = (r > self.range_gate[0]) & (r < self.range_gate[1])
         return Frame(time.monotonic(), points[keep],
                      snr[keep] if snr is not None else None)
 
@@ -173,7 +223,7 @@ class IWR6843Source:
             if frame.points.size and \
                     np.any(np.abs(frame.points[:, 3]) > self.BALL_MIN_SPEED):
                 capture = list(self._pre_roll)
-                deadline = frame.t + self.CAPTURE_WINDOW
+                deadline = frame.t + self.capture_window
                 for f in gen:
                     capture.append(f)
                     if f.t >= deadline:
