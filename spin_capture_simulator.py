@@ -47,7 +47,9 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from openflight_iwr6843.spin_decoder import decode, FS  # noqa: E402
 
-WAVELENGTH = 0.0125          # 24GHz, meters
+WAVELENGTH = 0.012427        # 24.125 GHz (RFbeam K-MC1 datasheet); matches
+                             # spin_decoder.WAVELENGTH so the synth->decode
+                             # speed round-trip stays consistent
 MPH_TO_MPS = 0.44704
 
 

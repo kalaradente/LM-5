@@ -22,7 +22,15 @@ from scipy.io import wavfile
 from .kalman import FreqTracker
 
 FS = 96_000
-WAVELENGTH = 0.0125                    # 24GHz
+# K-MC1 transmit wavelength. Per the RFbeam K-MC1 / K-MC1_LP datasheet the
+# transmitter frequency fTX is min/typ/max = 24.050 / 24.150 / 24.250 GHz, and
+# the datasheet characterizes the Rx chain and antenna gain at its nominal
+# "24.125 GHz" (also the block-diagram LO). We use that nominal 24.125 GHz:
+#   lambda = c / f = 299792458 / 24.125e9 = 0.012427 m.
+# (Was 0.0125 m, i.e. 24.0 GHz -- a ~0.6% high bias on every Doppler->speed
+# and Doppler->spin-sideband number. The ~0.4% fTX min-max span and the
+# 24.125-vs-24.150 nominal choice are both well inside other error sources.)
+WAVELENGTH = 0.012427                  # 24.125 GHz (RFbeam K-MC1 datasheet)
 SPIN_BAND = (25.0, 220.0)              # Hz rotation: ~1500-13000 rpm
 CARRIER_BAND = (1_216.0, 16_000.0)     # Hz: plausible ball tones (outbound).
                                         # Lower edge = 17 mph (7.6 m/s), matching
