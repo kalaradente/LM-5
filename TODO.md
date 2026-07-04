@@ -4,10 +4,12 @@ Running list of open items. Newest relevant item first per section.
 
 ## Hardware
 
-- [ ] **AC/DC switch for the K-MC1.** Need a physical switch (not just a
-      software toggle) to select which pair of output pins (AC or DC) feeds
-      the TRS cable — the two are different physical pins on the module, so
-      this is a wiring decision, not just a config value.
+- [ ] **AC/DC switch for the K-MC1.** Default wiring is the **AC output**
+      (see openflight_iwr6843/README.md / session.py). A physical switch to
+      the **DC output** is optional — only needed for the non-translating
+      drill-rig bench test where spin sits below AC's 40Hz corner. If you add
+      one, it selects which pair of output pins feeds the TRS cable (AC and
+      DC are different physical pins on the module — a wiring decision).
       - Requirement: **low-noise part.** This sits directly in the analog
         signal path before any amplification downstream, so switch quality
         matters — a noisy/high-resistance switch adds noise right where the
@@ -18,10 +20,11 @@ Running list of open items. Newest relevant item first per section.
         double-throw) switch could route both I and Q simultaneously with
         one physical action. Needs a specific part picked and added to the
         parts list — not yet sourced.
-      - Software side is done: `session.py`'s `kmc1_output` field
-        ("ac"/"dc") already drives the right filter settings in
-        `spin_decoder.decode()` via `spin_filter_kwargs`. Once the switch
-        part is chosen, just flip that session setting to match.
+      - Software side: no change needed when flipping. Filtering is
+        unconditional (clean_iq runs the same for either output), and
+        `session.py`'s `kmc1_output` field is provenance only — auto-detected
+        per shot by `spin_decoder.detect_kmc1_output()`. So the switch is a
+        pure hardware choice; the software follows the signal automatically.
 
 - [ ] Pin the audio-capture thread to its own CPU core on the Pi (e.g. via
       `taskset` or `sched_setaffinity`) so real-time capture never drops

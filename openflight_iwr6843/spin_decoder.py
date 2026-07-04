@@ -68,8 +68,10 @@ def detect_kmc1_output(z: np.ndarray, fs: int = FS,
     is what pushes the ratio up.
 
     Caveat — needs bench calibration: the HiFiBerry line-in is itself
-    AC-coupled, so the K-MC1 DC output's true 0Hz bias is blocked before the
-    ADC. This relies on energy in the (HiFiBerry-corner .. 35Hz) window, whose
+    AC-coupled, BUT as a hi-fi audio input its corner is only a few Hz (it has
+    to pass 20Hz+ bass) — nothing like the K-MC1 AC output's 40Hz corner. So
+    it blocks just the DC output's true 0Hz bias and passes the rest.
+    Detection therefore uses the wide (~few Hz .. 35Hz) window, whose signal
     strength on a real DC capture is an empirical question. A too-clean DC
     capture can read as "ac" — a benign miss, since it's metadata only.
     """

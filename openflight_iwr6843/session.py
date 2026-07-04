@@ -23,21 +23,24 @@ KMC1OutputMode = Literal["ac", "dc"]
 class SessionConfig:
     environment: Environment = "indoor"
     ball_type: BallType = "plain"
-    kmc1_output: KMC1OutputMode = "dc"
+    kmc1_output: KMC1OutputMode = "ac"
     # Which K-MC1 output pins feed the TRS cable — a wiring + provenance
-    # choice ONLY; it does not change the software filtering. spin_decoder's
-    # clean_iq runs the same for either output, so you can flip the physical
-    # AC/DC switch mid-session with no software change:
-    #   - DC output (0Hz-500kHz): full spin band, but carries DC offset +
-    #     mains hum that clean_iq removes.
-    #   - AC output (40Hz-15kHz): hardware already rolls off below 40Hz, so
-    #     clean_iq's DC-removal + 20Hz high-pass are no-ops there; only its
-    #     60Hz mains notch acts — and that's wanted, since 60Hz hum passes
-    #     AC coupling (60Hz > 40Hz corner) and lands in the spin band
-    #     (~3600rpm). AC's one real cost: it attenuates spin below ~2400rpm
-    #     (40Hz) in hardware, which software cannot undo. DC is the default
-    #     for that reason. (Datasheet-confirmed -3dB bandwidths.)
-    # This field is recorded as a shot tag (see tags()) for later analysis.
+    # choice ONLY; it does not change the software filtering (clean_iq runs
+    # the same either way, so you can flip the physical AC/DC switch mid-
+    # session with no software change). Also auto-detected per shot, see
+    # spin_decoder.detect_kmc1_output — this default is just the fallback.
+    #
+    # AC is the default:
+    #   - AC output (40Hz-15kHz): cleaner — no DC offset or near-DC drift to
+    #     deal with. Its 40Hz low corner does NOT hurt real shots: in flight
+    #     the ball translates, so spin rides as sidebands on the kHz Doppler
+    #     carrier (a 2000rpm driver = 33Hz sidebands on an ~11kHz carrier),
+    #     entirely inside AC's passband. The 40Hz corner only attenuates spin
+    #     seen at DC baseband — i.e. the non-translating drill-rig bench test.
+    #   - DC output (0Hz-500kHz): full baseband including that bench low-spin
+    #     case, but carries DC offset + mains hum that clean_iq removes. Kept
+    #     as the switchable alternative for drill-rig calibration.
+    # (Datasheet-confirmed -3dB bandwidths.) Recorded as a shot tag, see tags().
 
     # ---- geometry channel presets ------------------------------------
 

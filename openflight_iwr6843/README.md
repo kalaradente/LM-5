@@ -27,8 +27,14 @@ engine, React UI) is untouched.
 ## Wiring
 
 - IWR6843ISK → one micro-USB to the Pi (CLI port 115200, data port 921600).
-- K-MC1: I → left line input, Q → right line input, same gain both channels;
-  clean 5V supply (battery pack or linear regulator).
+- K-MC1: wire the **AC output** pins — I → left line input, Q → right line
+  input, same gain both channels; clean 5V supply (battery pack or linear
+  regulator). AC is the default: cleaner (no DC offset/hum) and it reads real
+  flight shots fully, including low-spin drivers, because spin rides as
+  sidebands on the kHz Doppler carrier (all inside AC's 40Hz–15kHz band).
+  The **DC output** pins are the switchable alternative, only needed for the
+  non-translating drill-rig bench test where spin sits at baseband below
+  40Hz; see `session.py`.
 - No custom PCB, no soldering beyond four header wires on the K-MC1.
 
 ## Bring-up ladder
