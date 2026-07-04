@@ -18,7 +18,7 @@ integration-only snapshot.
 | `openflight_iwr6843/` | Acquisition layer: TLV parser + Kalman trackers (`iwr6843_source.py`, `kalman.py`), spin decoder (`spin_decoder.py`), geometry+spin fusion (`shot_fusion.py`), session presets (`session.py`), GSPro Open Connect adapter (`gspro_adapter.py`), ALSA capture-gain control (`gain.py`), truth-data scoring (`validate.py`), chirp profile (`golf.cfg`). See its own README. |
 | `shot_simulator.py` | **Flight-physics** sim: type in ball speed/spin/launch/side-spin → full RK4 drag+Magnus trajectory (carry, apex, curve). `--live` pushes it into a running OpenFlight server so it renders in the real UI. |
 | `spin_capture_simulator.py` | **Spin-decoder** sim: synthesize a raw K-MC1 I/Q capture for a given shot and run the real `spin_decoder.decode()` on it — tests the signal path with no hardware. `--sweep` runs a speed×spin grid. |
-| `run_iwr6843.py` | Run the **real** IWR6843 + K-MC1 hardware against the real OpenFlight server/UI (same `on_shot_detected()` pipeline the live simulator exercises). |
+| `run_iwr6843.py` | Run the **real** IWR6843 + K-MC1 hardware against the real OpenFlight server/UI (same `on_shot_detected()` pipeline the live simulator exercises). Optional `--gspro-host` also forwards each shot to GSPro. |
 | `scripts/setup_wizard.sh` | One-command Pi bring-up: clones `openflight_upstream`, installs deps, discovers serial ports + HiFiBerry gain, writes `hardware.env`. |
 | `live_client.py` | WebSocket helper for `shot_simulator.py --live`. |
 | `TODO.md` | Running hardware/software roadmap. |

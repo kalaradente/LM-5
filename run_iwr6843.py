@@ -65,6 +65,7 @@ else:
 
 from openflight_iwr6843.iwr6843_source import IWR6843Source  # noqa: E402
 from openflight_iwr6843.shot_fusion import AudioRing, ShotFuser  # noqa: E402
+from openflight_iwr6843.gspro_adapter import GSProClient  # noqa: E402
 
 import openflight.server as ofserver  # noqa: E402
 from openflight.launch_monitor import ClubType, Shot  # noqa: E402
@@ -120,7 +121,7 @@ class IWR6843Monitor:
     controls keep working against real hardware."""
 
     def __init__(self, geom_port: str, data_port: str, cfg_path: str,
-                 audio_device=None):
+                 audio_device=None, gspro: Optional[GSProClient] = None):
         self._shots: List[Shot] = []
         self._current_club = ClubType.DRIVER
         self._shot_callback: Optional[Callable[[Shot], None]] = None
@@ -129,8 +130,19 @@ class IWR6843Monitor:
         self.source = IWR6843Source(geom_port, data_port, cfg_path,
                                      on_geometry=self.fuser.on_geometry)
         self._thread: Optional[threading.Thread] = None
+        self.gspro = gspro
 
     def _on_fused(self, fused: dict) -> None:
+        # GSPro gets the raw fused dict (its field names match shot_fusion's
+        # output directly -- ball_speed_mph/launch_angle_deg/etc.) BEFORE
+        # conversion to openflight's Shot dataclass below. Best-effort: a
+        # GSPro send failure must never take down real shot processing.
+        if self.gspro is not None:
+            try:
+                self.gspro.send_shot(fused)
+            except OSError:
+                log.warning("[gspro] send failed (disconnected?)", exc_info=True)
+
         shot = _fused_to_shot(fused, self._current_club)
         self._shots.append(shot)
         if self._shot_callback:
@@ -161,6 +173,8 @@ class IWR6843Monitor:
 
     def stop(self) -> None:
         self.source.stop()
+        if self.gspro is not None:
+            self.gspro.close()
 
     def get_shots(self) -> List[Shot]:
         return list(self._shots)
@@ -209,6 +223,11 @@ def main() -> None:
     parser.add_argument("--web-port", type=int, default=8080)
     parser.add_argument("--no-logging", action="store_true")
     parser.add_argument("--session-location", default="range")
+    parser.add_argument("--gspro-host", default=None,
+                         help="GSPro PC's LAN address; enables sending shots to GSPro "
+                              "over its Open Connect API. Omit to skip GSPro entirely.")
+    parser.add_argument("--gspro-port", type=int, default=921,
+                         help="GSPro Open Connect port (default: 921)")
     args = parser.parse_args()
 
     if not args.cli_port or not args.geom_port:
@@ -243,8 +262,22 @@ def main() -> None:
     except ValueError:
         sys.exit(f"error: unknown club '{args.club}'")
 
+    gspro = None
+    if args.gspro_host:
+        gspro = GSProClient(host=args.gspro_host, port=args.gspro_port)
+        try:
+            gspro.connect()
+            log.info("[gspro] connected to %s:%s", args.gspro_host, args.gspro_port)
+        except OSError as e:
+            # Non-fatal: run the launch monitor even if GSPro isn't reachable
+            # yet (e.g. sim not started up on the Windows PC). Shots just
+            # won't forward until you fix the connection and restart.
+            log.warning("[gspro] connect to %s:%s failed (%s) -- continuing "
+                        "without GSPro", args.gspro_host, args.gspro_port, e)
+            gspro = None
+
     monitor = IWR6843Monitor(args.cli_port, args.geom_port, args.cfg,
-                              audio_device=args.audio_device)
+                              audio_device=args.audio_device, gspro=gspro)
     monitor.set_club(club)
     ofserver.monitor = monitor
     monitor.start(shot_callback=ofserver.on_shot_detected)
@@ -253,6 +286,7 @@ def main() -> None:
     print("  OpenFlight -- IWR6843 + K-MC1 hardware")
     print("=" * 50)
     print(f"Ballistics: {'ENABLED' if args.ballistics else 'DISABLED (table fallback)'}")
+    print(f"GSPro: {'connected -> ' + args.gspro_host if gspro else 'not configured'}")
     print(f"Server starting at http://{args.host}:{args.web_port}")
 
     try:

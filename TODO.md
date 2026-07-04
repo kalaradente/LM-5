@@ -45,7 +45,9 @@ Running list of open items. Newest relevant item first per section.
 - [x] Self-test CLI (`python -m openflight_iwr6843.spin_decoder --selftest`)
 - [x] Raw capture archiving on every trigger (radar + audio, replayable)
 - [x] Session mode selector (indoor/outdoor x ball type)
-- [x] GSPro Open Connect adapter, tested against a mock server
+- [x] GSPro Open Connect adapter, wired into `run_iwr6843.py` via
+      `--gspro-host`/`--gspro-port` (optional; connect failure is
+      non-fatal, launch monitor runs fine without it)
 - [ ] Wire `SessionConfig` into `IWR6843Source` (currently the geometry
       side still uses hardcoded class constants for range gate / capture
       window rather than reading from session config — only the spin side
