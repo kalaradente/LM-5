@@ -69,5 +69,4 @@ the Pi never flashes the board, it only streams `golf.cfg` at runtime.
   automatically after cloning `openflight_upstream`. It's purely additive —
   nothing in upstream's behavior changes. `run_iwr6843.py` (real hardware)
   and the offline sims don't need it.
-- No LICENSE yet. OpenFlight is AGPL-3.0; since this integrates with it,
-  consider matching (see `TODO.md`).
+- Licensed **AGPL-3.0-or-later**, matching OpenFlight (see `LICENSE`).

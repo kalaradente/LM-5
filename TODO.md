@@ -70,8 +70,8 @@ Running list of open items. Newest relevant item first per section.
       confirm (rather than infer) the real reason for the sound trigger
       and rolling buffer, before posting anything publicly that
       characterizes his design.
-- [ ] git init the repo (AGPL-3.0 to match OpenFlight, `.gitignore`
-      excluding `captures/` and `__pycache__/`) before first bench session.
+- [x] git init the repo (AGPL-3.0-or-later, matching OpenFlight; `.gitignore`
+      excludes `captures/` and `__pycache__/`) — done, see LICENSE.
 - [ ] Confirm mains frequency in `spin_decoder.MAINS_NOTCH_HZ` matches your
       country (60Hz North America, 50Hz most everywhere else — already
       documented inline in the code).
