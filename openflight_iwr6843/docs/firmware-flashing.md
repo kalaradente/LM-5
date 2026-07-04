@@ -69,26 +69,51 @@ the original link is dead):
 - [ ] SHA256 checksum (`shasum -a 256 <file>` or `certutil -hashfile <file> SHA256`): `________`
 - [ ] Date downloaded: `________`
 
-## Steps (outline — fill in the confirmed values as you go)
+## SOP switch settings (confirmed from TI docs — SWRU546E Table 3-3, xWR6843ISK/IWR6843ISK-ODS Rev C section, cross-checked against the chip datasheet SWRS219F Table 8-1)
 
-1. Set the board's **SOP jumpers to flashing mode** (see table below).
-2. Power-cycle the board.
+The ISK's S1 switch (S1.1=SOP2, S1.2=SOP1, S1.3=SOP0 — S1.4/S1.5 are unrelated
+muxing, leave as shown):
+
+| | S1.1 (SOP2) | S1.2 (SOP1) | S1.3 (SOP0) | S1.4 | S1.5 |
+|---|---|---|---|---|---|
+| **Flashing** | ON | OFF | ON | ON | OFF |
+| **Functional** | OFF | OFF | ON | ON | OFF |
+
+Only **S1.1 changes** between the two modes. Chip-level meaning (Table 8-1):
+`SOP[2:1:0] = 101` (flashing — bootloader waits for a UART flashing utility),
+`= 001` (functional — bootloader loads the app from QSPI flash). There's also
+a `= 011` **Debug Mode** (bootloader bypassed, R4F halted for emulator
+connection) if you ever need it, though the flashing ladder below doesn't.
+
+**SOP is sensed only at boot** — after flipping S1.1, press the reset switch
+(S2) or power-cycle; flipping the switch alone does nothing until the board
+re-boots.
+
+Not yet confirmed from documentation (needs the physical board / TI Demo
+Visualizer): which COM port number is the CLI vs. data port. The EVM guide
+shows this in a screenshot (its Figure 3-20), not as text, so it has to be
+read off the actual device manager / Demo Visualizer the first time — this
+is exactly what bring-up rung 1 is for.
+
+## Steps
+
+1. Set the board's **SOP switches to flashing mode** (table above): S1.1=ON,
+   S1.2=OFF, S1.3=ON, S1.4=ON, S1.5=OFF.
+2. Press reset (S2) or power-cycle — SOP is boot-sensed only.
 3. In Uniflash: pick the IWR6843 target, load the mmw demo `.bin`, flash.
-4. Set the **SOP jumpers back to functional mode**.
-5. Power-cycle again.
+4. Set **S1.1 back to OFF** (functional mode) — S1.2-S1.5 unchanged.
+5. Reset or power-cycle again.
 6. Confirm with the TI mmWave Demo Visualizer (bring-up rung 1): stock config
    + hand-wave should show a point cloud.
 
 ## TO CONFIRM (do not trust from memory — record here once verified)
 
-These depend on your exact board revision and SDK version. Get them from the
-**IWR6843ISK EVM User's Guide** and the board silkscreen, and write the
-confirmed values in so this file becomes the record:
+SOP switch settings above are sourced from TI's own docs (see table), not a
+guess — but SDK version and the actual COM port numbers are still specific
+to your setup:
 
 - [ ] SDK version flashed: `________`
 - [ ] OOB demo binary path/filename: `________`
-- [ ] SOP jumper positions — **flashing** mode: `SOP2=__ SOP1=__ SOP0=__`
-- [ ] SOP jumper positions — **functional** mode: `SOP2=__ SOP1=__ SOP0=__`
 - [ ] CLI COM port on Windows: `________`  data COM port: `________`
 - [ ] After flashing, did the Demo Visualizer show a point cloud? `yes / no`
 
