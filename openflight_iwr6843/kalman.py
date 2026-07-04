@@ -78,16 +78,32 @@ class FreqTracker:
 class BallTracker:
     """3D constant-velocity + gravity tracker over IWR6843 point fixes.
 
-    State: [x, y, z, vx, vy, vz] in the sensor frame (x lateral, y boresight,
-    z up). Gravity enters as a known control input on vz. Returns the RTS-
-    smoothed state sequence; the velocity at the first tracked fix is the
-    launch vector.
+    State: [x, y, z, vx, vy, vz] in the SENSOR's own frame (x lateral,
+    y boresight, z "up" as the sensor's mounting defines it) -- NOT
+    necessarily gravity-aligned. Gravity enters as a known control input,
+    but true gravity acts along the WORLD's vertical, not the sensor's local
+    z, unless the sensor happens to be mounted perfectly level.
+
+    tilt_rad: the sensor's physical mounting tilt (rotation of the sensor's
+    y/z axes about its own x axis, e.g. shimmed up at the front -- see
+    iwr6843_source.py's MOUNT_TILT_DEG). At tilt_rad=0 (mounted level) this
+    reduces to the old behavior, gravity purely along sensor -z. At nonzero
+    tilt, gravity is decomposed into the sensor's own y/z components so the
+    filter's physics model matches reality instead of assuming the sensor's
+    z axis is vertical. Returns the RTS-smoothed state sequence, still in
+    sensor-frame coordinates -- rotate to world frame (see
+    iwr6843_source.py) before computing a world-referenced launch angle.
     """
 
-    def __init__(self, q_accel=6.0**2, r_pos=0.06**2, gate=5.0):
+    def __init__(self, q_accel=6.0**2, r_pos=0.06**2, gate=5.0, tilt_rad=0.0):
         self.q = q_accel
         self.r = r_pos
         self.gate = gate
+        # True gravity (0, -G) in world (y, z) rotated into the sensor's own
+        # tilted frame: gy = -G*sin(tilt), gz = -G*cos(tilt). At tilt=0 this
+        # is (0, -G), matching the sensor-z-is-vertical assumption exactly.
+        self.g_sensor_y = -G * np.sin(tilt_rad)
+        self.g_sensor_z = -G * np.cos(tilt_rad)
 
     def smooth(self, t: np.ndarray, xyz: np.ndarray):
         n = len(t)
@@ -106,7 +122,8 @@ class BallTracker:
                 [dt**3 / 3 * np.eye(3), dt**2 / 2 * np.eye(3)],
                 [dt**2 / 2 * np.eye(3), dt * np.eye(3)]]) if dt \
                 else np.zeros((6, 6))
-            u = np.array([0, 0, -0.5 * G * dt**2, 0, 0, -G * dt])
+            u = np.array([0, 0.5 * self.g_sensor_y * dt**2, 0.5 * self.g_sensor_z * dt**2,
+                          0, self.g_sensor_y * dt, self.g_sensor_z * dt])
             xp = F @ x + u
             Pp = F @ P @ F.T + Q
             innov = xyz[k] - H @ xp

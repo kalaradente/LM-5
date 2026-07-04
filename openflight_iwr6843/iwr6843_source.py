@@ -45,6 +45,15 @@ class IWR6843Source:
     MIN_BALL_FIXES = 4
     RANGE_GATE = (0.3, 6.0)
     COOLDOWN = 2.0
+    # Physical mount tilt (shimmed up at the front, see parts list wiring
+    # summary) -- the sensor's own z axis is NOT vertical unless this is 0.
+    # 10 deg centers the antenna's measured elevation beamwidth on
+    # driver/mid-iron launch angles (~11-20 deg), at the cost of the most
+    # extreme wedge shots (~30-35 deg) running closer to the edge of
+    # characterized antenna gain -- see golf.cfg's aoaFovCfg comment.
+    # CALIBRATE against the actual mount (inclinometer/level) once built;
+    # this is a considered default, not a measurement.
+    MOUNT_TILT_DEG = 10.0
 
     def __init__(self, cli_port: str, data_port: str, cfg_path: str,
                  on_geometry: Callable[[dict], None],
@@ -208,16 +217,31 @@ class IWR6843Source:
         order = np.argsort(b[:, 0])
         t, xyz, v_rad = b[order, 0], b[order, 1:4], b[order, 4]
 
-        states, used = BallTracker().smooth(t, xyz)
+        tilt_rad = math.radians(self.MOUNT_TILT_DEG)
+        states, used = BallTracker(tilt_rad=tilt_rad).smooth(t, xyz)
         if used.sum() < self.MIN_BALL_FIXES:
             return None
         ui = np.flatnonzero(used)
         k0, km = int(ui[0]), int(ui[len(ui) // 2])
-        vel = states[km, 3:].copy()                # mid-track: lowest variance
-        vel[2] += 9.81 * (t[km] - t[k0])           # gravity-correct to launch
-        speed = float(np.linalg.norm(vel))
-        launch = math.degrees(math.atan2(vel[2], math.hypot(vel[0], vel[1])))
-        side = math.degrees(math.atan2(vel[0], vel[1]))
+        vel = states[km, 3:].copy()                # mid-track: lowest variance,
+                                                     # still in SENSOR frame
+        # Back-extrapolate mid-track velocity to the launch instant (k0),
+        # using gravity decomposed into the sensor's own (tilted) y/z --
+        # same physics the Kalman filter itself now uses (see kalman.py).
+        dt_launch = t[km] - t[k0]
+        vel[1] += -9.81 * math.sin(tilt_rad) * dt_launch
+        vel[2] += -9.81 * math.cos(tilt_rad) * dt_launch
+        # Rotate sensor-frame velocity into world (gravity-aligned) frame
+        # before computing launch angle -- the sensor's own z axis is tilted
+        # MOUNT_TILT_DEG off true vertical, so atan2 against raw sensor-z
+        # would report launch angle relative to the tilted mount, not level
+        # ground (a systematic bias of roughly the tilt angle itself).
+        cos_t, sin_t = math.cos(tilt_rad), math.sin(tilt_rad)
+        vy_world = vel[1] * cos_t - vel[2] * sin_t
+        vz_world = vel[1] * sin_t + vel[2] * cos_t
+        speed = math.sqrt(vel[0]**2 + vy_world**2 + vz_world**2)
+        launch = math.degrees(math.atan2(vz_world, math.hypot(vel[0], vy_world)))
+        side = math.degrees(math.atan2(vel[0], vy_world))
 
         los = xyz[k0] / np.linalg.norm(xyz[k0])
         agree = 1.0 - min(1.0, abs(abs(float(vel @ los)) - v_rad[k0]) /

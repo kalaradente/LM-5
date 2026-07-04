@@ -88,7 +88,10 @@ items (pick any well-reviewed option matching the spec).
 
 Both radar boards mount vertically on standoffs, antennas facing the tee,
 coplanar and aimed identically. Plate sits on rubber feet 1–1.5m behind the
-ball on the target line, front edge shimmed 10–15° up, verified level side-to-side.
+ball on the target line, front edge shimmed 10° up (matches
+`IWR6843Source.MOUNT_TILT_DEG` in code -- if you build a different tilt,
+change that constant to match, or launch angle will be systematically
+wrong by roughly the tilt-vs-constant mismatch), verified level side-to-side.
 
 ## Software (all free)
 

@@ -52,13 +52,27 @@ Running list of open items. Newest relevant item first per section.
 
 - [x] Kalman-smoothed carrier tracker + 3D ballistic tracker (`kalman.py`)
 - [x] Harmonic-sum ("tap-along") spin bank replacing naive peak-pick
-- [x] DC-offset removal + high-pass + mains notch filter (`clean_iq`)
+- [x] Mains notch filter (`clean_iq`) -- simplified to just this + trivial
+      mean-removal once we committed to AC-only K-MC1 wiring (AC's own
+      40Hz hardware corner already does what the old DC-era high-pass did)
 - [x] Self-test CLI (`python -m openflight_iwr6843.spin_decoder --selftest`)
 - [x] Raw capture archiving on every trigger (radar + audio, replayable)
 - [x] Session mode selector (indoor/outdoor x ball type)
 - [x] GSPro Open Connect adapter, wired into `run_iwr6843.py` via
       `--gspro-host`/`--gspro-port` (optional; connect failure is
       non-fatal, launch monitor runs fine without it)
+- [x] **Fixed a real bug**: launch angle was computed directly from the
+      sensor's own z-axis, which isn't vertical once the mount is
+      physically tilted up (10-15 deg per the wiring summary). This biased
+      every launch angle reading by ~the tilt angle (confirmed via synthetic
+      test: uncorrected code was off by -9.98 to -10.00 deg across three
+      test angles). Fixed in two places: `kalman.BallTracker` now takes
+      `tilt_rad` and decomposes gravity into the sensor's own tilted y/z
+      instead of assuming sensor-z=vertical; `iwr6843_source.analyze()`
+      rotates the final sensor-frame velocity into world frame before
+      computing launch/side angle. `MOUNT_TILT_DEG = 10.0` is a considered
+      default (see golf.cfg's aoaFovCfg comment for the antenna-beamwidth
+      reasoning) -- CALIBRATE against the actual built mount.
 - [ ] Wire `SessionConfig` into `IWR6843Source` (currently the geometry
       side still uses hardcoded class constants for range gate / capture
       window rather than reading from session config — only the spin side
