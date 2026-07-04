@@ -11,36 +11,22 @@ does not belong in this file.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from typing import Literal
 
 Environment = Literal["indoor", "outdoor"]
 BallType = Literal["plain", "marked", "rct"]
-KMC1OutputMode = Literal["ac", "dc"]
 
 
 @dataclass(frozen=True)
 class SessionConfig:
     environment: Environment = "indoor"
     ball_type: BallType = "plain"
-    kmc1_output: KMC1OutputMode = "ac"
-    # Which K-MC1 output pins feed the TRS cable — a wiring + provenance
-    # choice ONLY; it does not change the software filtering (clean_iq runs
-    # the same either way, so you can flip the physical AC/DC switch mid-
-    # session with no software change). Also auto-detected per shot, see
-    # spin_decoder.detect_kmc1_output — this default is just the fallback.
-    #
-    # AC is the default:
-    #   - AC output (40Hz-15kHz): cleaner — no DC offset or near-DC drift to
-    #     deal with. Its 40Hz low corner does NOT hurt real shots: in flight
-    #     the ball translates, so spin rides as sidebands on the kHz Doppler
-    #     carrier (a 2000rpm driver = 33Hz sidebands on an ~11kHz carrier),
-    #     entirely inside AC's passband. The 40Hz corner only attenuates spin
-    #     seen at DC baseband — i.e. the non-translating drill-rig bench test.
-    #   - DC output (0Hz-500kHz): full baseband including that bench low-spin
-    #     case, but carries DC offset + mains hum that clean_iq removes. Kept
-    #     as the switchable alternative for drill-rig calibration.
-    # (Datasheet-confirmed -3dB bandwidths.) Recorded as a shot tag, see tags().
+    # K-MC1 is wired to its AC output (40Hz-15kHz). That's cleaner (no DC
+    # offset/hum) and it reads every real shot: in flight the ball translates,
+    # so spin rides as sidebands on the kHz Doppler carrier (a 2000rpm driver
+    # = 33Hz sidebands on an ~11kHz carrier), well inside AC's passband. No
+    # AC/DC selection in software — see openflight_iwr6843/README.md.
 
     # ---- geometry channel presets ------------------------------------
 
@@ -87,12 +73,10 @@ class SessionConfig:
 
     def tags(self) -> dict:
         """Fields merged into every shot record for validation grouping."""
-        return {"environment": self.environment, "ball_type": self.ball_type,
-                "kmc1_output": self.kmc1_output}
+        return {"environment": self.environment, "ball_type": self.ball_type}
 
     def summary(self) -> str:
-        return (f"{self.environment}, {self.ball_type} balls, "
-                f"K-MC1 {self.kmc1_output.upper()} output | "
+        return (f"{self.environment}, {self.ball_type} balls | "
                 f"gate {self.range_gate}m, window {self.capture_window_s}s, "
                 f"spin floor {self.spin_conf_floor}")
 

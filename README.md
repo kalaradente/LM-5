@@ -5,17 +5,17 @@ Raspberry Pi, targeting the [OpenFlight](https://github.com/jewbetcha/openflight
 server/physics/UI stack.
 
 LM-2 merges two lines of work: the acquisition-layer signal processing
-(spin decoder with `clean_iq` filtering, session AC/DC modes, GSPro adapter,
-synthetic-capture self-tests) and the OpenFlight integration/tooling (live
-physics simulator, hardware runner, one-command setup wizard, ALSA gain
-control, firmware-flashing docs). See [LM-1](https://github.com/kalaradente/LM-1)
-for the earlier integration-only snapshot.
+(spin decoder with mains-hum cleanup, GSPro adapter, synthetic-capture
+self-tests) and the OpenFlight integration/tooling (live physics simulator,
+hardware runner, one-command setup wizard, ALSA gain control, firmware-flashing
+docs). See [LM-1](https://github.com/kalaradente/LM-1) for the earlier
+integration-only snapshot.
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `openflight_iwr6843/` | Acquisition layer: TLV parser + Kalman trackers (`iwr6843_source.py`, `kalman.py`), spin decoder with pre-clean filtering (`spin_decoder.py`), geometry+spin fusion (`shot_fusion.py`), session presets incl. K-MC1 AC/DC output mode (`session.py`), GSPro Open Connect adapter (`gspro_adapter.py`), ALSA capture-gain control (`gain.py`), truth-data scoring (`validate.py`), chirp profile (`golf.cfg`). See its own README. |
+| `openflight_iwr6843/` | Acquisition layer: TLV parser + Kalman trackers (`iwr6843_source.py`, `kalman.py`), spin decoder (`spin_decoder.py`), geometry+spin fusion (`shot_fusion.py`), session presets (`session.py`), GSPro Open Connect adapter (`gspro_adapter.py`), ALSA capture-gain control (`gain.py`), truth-data scoring (`validate.py`), chirp profile (`golf.cfg`). See its own README. |
 | `shot_simulator.py` | **Flight-physics** sim: type in ball speed/spin/launch/side-spin → full RK4 drag+Magnus trajectory (carry, apex, curve). `--live` pushes it into a running OpenFlight server so it renders in the real UI. |
 | `spin_capture_simulator.py` | **Spin-decoder** sim: synthesize a raw K-MC1 I/Q capture for a given shot and run the real `spin_decoder.decode()` on it — tests the signal path with no hardware. `--sweep` runs a speed×spin grid. |
 | `run_iwr6843.py` | Run the **real** IWR6843 + K-MC1 hardware against the real OpenFlight server/UI (same `on_shot_detected()` pipeline the live simulator exercises). |

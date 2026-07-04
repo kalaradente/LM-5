@@ -26,7 +26,7 @@ try:
 except (ImportError, OSError):                        # allow offline replay
     sd = None
 
-from .spin_decoder import decode, detect_kmc1_output, FS
+from .spin_decoder import decode, FS
 
 SPIN_CONF_FLOOR = 0.35        # below this, fall back to inference
 AUDIO_PRE = 0.05              # s of audio before impact to include
@@ -92,14 +92,9 @@ def infer_spin(geom: dict) -> Optional[float]:
 
 class ShotFuser:
     def __init__(self, publish: Callable[[dict], None],
-                 audio: Optional[AudioRing] = None,
-                 session=None):
+                 audio: Optional[AudioRing] = None):
         self.publish = publish
         self.audio = audio
-        # Reserved for future session-driven presets (spin_conf_floor,
-        # capture window — see TODO). No longer used for filter selection:
-        # cleaning is unconditional now (see on_geometry).
-        self.session = session          # session.SessionConfig, optional
 
     def on_geometry(self, geom: dict):
         shot = dict(geom)
@@ -108,17 +103,7 @@ class ShotFuser:
         if self.audio is not None:
             z = self.audio.window(geom["t_impact"], AUDIO_PRE, AUDIO_POST)
             self._archive_audio(z, geom.get("capture_id"))
-            # Cleaning is unconditional and identical for either K-MC1 output:
-            # on an AC capture, clean_iq's DC-removal + 20Hz high-pass are
-            # no-ops (nothing below the 40Hz corner) and only its 60Hz notch
-            # acts — which is wanted, since 60Hz hum survives AC coupling and
-            # sits in the spin band. So the AC/DC switch needs no software
-            # change; see session.py.
             result = decode(z)
-            # Auto-detect AC vs DC wiring from the capture and tag the shot
-            # (provenance only; the switch doesn't change decoding). Overrides
-            # any static session.kmc1_output with what the signal actually shows.
-            shot["kmc1_output"] = detect_kmc1_output(z)
             if result.get("ok") and \
                     result.get("confidence", 0) >= SPIN_CONF_FLOOR:
                 shot.update(spin_rpm=round(result["spin_rpm"]),

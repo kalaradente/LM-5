@@ -4,27 +4,10 @@ Running list of open items. Newest relevant item first per section.
 
 ## Hardware
 
-- [ ] **AC/DC switch for the K-MC1.** Default wiring is the **AC output**
-      (see openflight_iwr6843/README.md / session.py). A physical switch to
-      the **DC output** is optional — only needed for the non-translating
-      drill-rig bench test where spin sits below AC's 40Hz corner. If you add
-      one, it selects which pair of output pins feeds the TRS cable (AC and
-      DC are different physical pins on the module — a wiring decision).
-      - Requirement: **low-noise part.** This sits directly in the analog
-        signal path before any amplification downstream, so switch quality
-        matters — a noisy/high-resistance switch adds noise right where the
-        signal is weakest.
-      - Candidate part class: a small-signal RF/audio-grade slide or toggle
-        switch (gold-plated contacts, low contact resistance) rather than a
-        generic hardware-store switch. A mechanical DPDT (double-pole,
-        double-throw) switch could route both I and Q simultaneously with
-        one physical action. Needs a specific part picked and added to the
-        parts list — not yet sourced.
-      - Software side: no change needed when flipping. Filtering is
-        unconditional (clean_iq runs the same for either output), and
-        `session.py`'s `kmc1_output` field is provenance only — auto-detected
-        per shot by `spin_decoder.detect_kmc1_output()`. So the switch is a
-        pure hardware choice; the software follows the signal automatically.
+- K-MC1 wiring is settled: **AC output only** (see
+  openflight_iwr6843/README.md). No AC/DC switch, no software selection —
+  AC reads every real shot since spin rides as sidebands on the kHz Doppler
+  carrier.
 
 - [ ] Pin the audio-capture thread to its own CPU core on the Pi (e.g. via
       `taskset` or `sched_setaffinity`) so real-time capture never drops
@@ -61,7 +44,7 @@ Running list of open items. Newest relevant item first per section.
 - [x] DC-offset removal + high-pass + mains notch filter (`clean_iq`)
 - [x] Self-test CLI (`python -m openflight_iwr6843.spin_decoder --selftest`)
 - [x] Raw capture archiving on every trigger (radar + audio, replayable)
-- [x] Session mode selector (indoor/outdoor x ball type x AC/DC output)
+- [x] Session mode selector (indoor/outdoor x ball type)
 - [x] GSPro Open Connect adapter, tested against a mock server
 - [ ] Wire `SessionConfig` into `IWR6843Source` (currently the geometry
       side still uses hardcoded class constants for range gate / capture
@@ -93,9 +76,9 @@ Running list of open items. Newest relevant item first per section.
 
 ## Deferred (revisit only if bench data says so)
 
-- [ ] 4-channel HAT upgrade to capture AC and DC simultaneously instead of
-      switching between them (only worth it if the AC/DC switch + software
-      filtering approach proves insufficient on real low-spin captures).
+- [ ] DC output (or a 4-ch HAT to capture AC+DC) — revisit ONLY if real
+      low-spin drill-rig bench captures prove AC-only insufficient. AC is the
+      committed default otherwise.
 - [ ] DCA1000 raw-ADC capture for true micro-Doppler spin on the 6843
       (only if the K-MC1 channel's bench results say the spin thesis needs
       it).
