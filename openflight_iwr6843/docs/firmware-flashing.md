@@ -130,3 +130,18 @@ python3 run_iwr6843.py --ballistics
 board on startup. Diff `golf.cfg`'s argument formats against the reference
 config from the **same SDK version you flashed** before the first real
 capture — that version match is the entire reason for pinning the flash.
+
+**This applies to the TLV wire format too, not just `golf.cfg`'s CLI
+parameters.** `iwr6843_source.py`'s frame/TLV parser was checked against
+TI's "Understanding the Out of Box Demo Data Output" doc: the magic word,
+both TLV type IDs, and the Detected Points structure all match exactly.
+One open question that doc itself doesn't resolve: it lists frame header
+fields that sum to 40 bytes (8-byte magic word + 32-byte header) but
+separately states the header is 44 bytes total -- an internal
+inconsistency, most likely an SDK-version difference (a field added in a
+later revision) rather than either number being simply wrong. **Bring-up
+rung 2** (this parser against a live stream, positions must match the TI
+Demo Visualizer) is exactly the check that catches this empirically: a
+wrong header length shows up as garbage or missing points, not a subtle
+numeric drift. If rung 2 fails, this is the first thing to check against
+your specific flashed SDK version's demo source.

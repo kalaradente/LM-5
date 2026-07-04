@@ -21,6 +21,20 @@ import serial
 
 from .kalman import BallTracker
 
+# Cross-checked against TI's "Understanding the Out of Box Demo Data Output"
+# doc. Magic word, both TLV type IDs, and the Detected Points TLV layout
+# (16 bytes/point: x,y,z,doppler as 4x float32, same field order) all match
+# exactly. FRAME_HEADER_LEN below is the one open question: our 32 bytes
+# (+ the 8-byte magic word = 40 total) matches summing that doc's own listed
+# fields, but the SAME doc separately states the frame header is 44 bytes
+# total -- an internal inconsistency in that source, most likely explained
+# by an SDK-version difference (a field added in some later SDK revision,
+# e.g. numStaticDetectedObj) rather than either number being simply wrong.
+# NOT resolved from documentation alone -- but bring-up rung 2 (this parser
+# against a live stream, positions must match the TI Demo Visualizer) is
+# exactly the empirical check that catches a wrong header length: it would
+# show up as garbage/missing points, not a subtle numeric error. Diff this
+# against your specific flashed SDK version's demo source if rung 2 fails.
 MAGIC_WORD = b"\x02\x01\x04\x03\x06\x05\x08\x07"
 FRAME_HEADER_FMT = "<8I"
 FRAME_HEADER_LEN = 32
@@ -127,7 +141,10 @@ class IWR6843Source:
                                     count=num_obj * 4).reshape(num_obj, 4)
                 points = pts.astype(np.float64)
             elif tlv_type == TLV_SIDE_INFO and num_obj:
-                si = np.frombuffer(body, dtype=np.int16,
+                # snr, noise: both uint16_t per TI's spec (was wrongly int16
+                # here; harmless in practice since real SNR/noise values
+                # never approach the sign bit, but correct is correct).
+                si = np.frombuffer(body, dtype=np.uint16,
                                    count=num_obj * 2).reshape(num_obj, 2)
                 snr = si[:, 0].astype(np.float64)
             offset += 8 + tlv_len
