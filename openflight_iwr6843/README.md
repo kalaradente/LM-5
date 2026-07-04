@@ -53,7 +53,7 @@ from openflight_iwr6843.shot_fusion import ShotFuser, AudioRing
 
 audio = AudioRing(); audio.start()
 fuser = ShotFuser(publish=my_openflight_publish, audio=audio)
-src = IWR6843Source("/dev/ttyUSB0", "/dev/ttyUSB1", "golf.cfg",
+src = IWR6843Source("/dev/ttyACM0", "/dev/ttyACM1", "golf.cfg",
                     on_geometry=fuser.on_geometry)
 src.run()
 ```
@@ -64,7 +64,7 @@ shot dataclass in your OpenFlight checkout.
 ## Validation
 
 Per session, capture three artifacts per swing: the K-MC1 stereo wav, the
-raw TLV byte log (`cat /dev/ttyUSB1 > shots.bin`), and the truth unit's
+raw TLV byte log (`cat /dev/ttyACM1 > shots.bin`), and the truth unit's
 export. Then:
 
 ```

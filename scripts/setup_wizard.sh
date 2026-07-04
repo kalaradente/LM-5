@@ -145,15 +145,23 @@ fi
 # ---- 5. IWR6843 serial ports (automatic) ---------------------------------
 
 log "Step 5: IWR6843 serial ports"
+# The IWR6843's onboard XDS110 debug probe is USB CDC-ACM class, so it
+# enumerates as /dev/ttyACM* on Linux (not ttyUSB*) -- no driver install
+# needed, cdc_acm is built into Raspberry Pi OS (unlike Windows, which needs
+# TI's XDS110 driver via Uniflash/CCS). ttyUSB* included below just in case
+# a given kernel/board combination differs.
 # (not `mapfile` -- bash 3.2 on macOS doesn't have it; this works on both
 # that and the Pi's modern bash)
 PORTS=()
 while IFS= read -r line; do
     [ -n "$line" ] && PORTS+=("$line")
-done < <(ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null || true)
+done < <(ls /dev/ttyACM* /dev/ttyUSB* 2>/dev/null || true)
 
 if [ ${#PORTS[@]} -eq 0 ]; then
-    error "No /dev/ttyUSB*/ttyACM* devices found. Plug in the IWR6843ISK and re-run."
+    error "No /dev/ttyACM*/ttyUSB* devices found. Plug in the IWR6843ISK and re-run."
+    error "(cdc_acm is built into Raspberry Pi OS -- if lsusb sees the board but no"
+    error "/dev/ttyACM* appears, check dmesg; there's a known regression in some"
+    error "Pi kernel builds where cdc_acm registers but doesn't create device nodes.)"
     CLI_PORT=""
     GEOM_PORT=""
 elif [ ${#PORTS[@]} -ne 2 ]; then
@@ -194,7 +202,7 @@ else
     warn "board -- confirm against the TI mmWave Demo Visualizer (rung 1) the"
     warn "first time before trusting it for real captures."
 
-    # Persistent naming: without this, hardware.env's raw /dev/ttyUSBn paths
+    # Persistent naming: without this, hardware.env's raw /dev/ttyACMn paths
     # can silently point at the wrong physical port after a reboot/replug,
     # since USB enumeration order isn't guaranteed.
     if command -v udevadm >/dev/null 2>&1 && [ -n "$BOOT_CONFIG" ]; then

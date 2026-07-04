@@ -45,6 +45,30 @@ against the same version's reference config, and both the TI Demo Visualizer
   `packages/ti/demo/xwr68xx/mmw/` build output)
 - Micro-USB to the board; note the CLI (115200) and data (921600) COM ports
 
+## Windows XDS110 driver
+
+Windows needs TI's XDS110 driver installed before the board's CLI/data COM
+ports (or Uniflash) will work — this is the Windows-specific step; **the Pi
+needs no driver at all** (the same XDS110 debug probe is USB CDC-ACM class
+on Linux, and `cdc_acm` ships built into Raspberry Pi OS).
+
+**Not bundled in this repo, on purpose.** TI's driver packages (whether the
+standalone XDS110 driver or the one bundled with Uniflash/Code Composer
+Studio) come under TI's own click-through license, which typically restricts
+redistribution — and the installer can run tens to hundreds of MB, which
+doesn't belong in this git history either way.
+
+Instead, pin the exact provenance here once you've downloaded it, so you can
+always get back to the *identical* file even if TI reorganizes their site
+(a checksum is verifiable against a mirror or the Wayback Machine even when
+the original link is dead):
+
+- [ ] Download URL used: `________`
+- [ ] Driver/package version: `________`
+- [ ] Installer filename: `________`
+- [ ] SHA256 checksum (`shasum -a 256 <file>` or `certutil -hashfile <file> SHA256`): `________`
+- [ ] Date downloaded: `________`
+
 ## Steps (outline — fill in the confirmed values as you go)
 
 1. Set the board's **SOP jumpers to flashing mode** (see table below).
