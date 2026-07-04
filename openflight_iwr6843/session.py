@@ -24,6 +24,7 @@ class SessionConfig:
     environment: Environment = "indoor"
     ball_type: BallType = "plain"
     kmc1_output: KMC1OutputMode = "dc"
+    # Bandwidths below are datasheet-confirmed K-MC1 -3dB figures.
     # "ac"  — wired to the K-MC1's AC output pins (40Hz-15kHz, -3dB).
     #         Hardware already rolls off near-DC clutter; software filtering
     #         mostly redundant, but the AC path attenuates spin tones below

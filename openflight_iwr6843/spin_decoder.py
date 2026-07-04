@@ -26,7 +26,13 @@ WAVELENGTH = 0.0125                    # 24GHz
 SPIN_BAND = (25.0, 220.0)              # Hz rotation: ~1500-13000 rpm
 CARRIER_BAND = (1_216.0, 16_000.0)     # Hz: plausible ball tones (outbound).
                                         # Lower edge = 17 mph (7.6 m/s), matching
-                                        # iwr6843_source.BALL_MIN_SPEED.
+                                        # iwr6843_source.BALL_MIN_SPEED. Upper
+                                        # edge (16kHz ~ 224mph) sits just past the
+                                        # K-MC1 AC output's 15kHz -3dB ceiling
+                                        # (~210mph), so on AC wiring the very top
+                                        # of the band rolls off — irrelevant, it's
+                                        # above real shots. DC output (0-500kHz)
+                                        # covers the whole band. See session.py.
 MIN_TRACK_FRAMES = 4
 
 
