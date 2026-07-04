@@ -21,6 +21,7 @@ integration-only snapshot.
 | `run_iwr6843.py` | Run the **real** IWR6843 + K-MC1 hardware against the real OpenFlight server/UI (same `on_shot_detected()` pipeline the live simulator exercises). Optional `--gspro-host` also forwards each shot to GSPro. |
 | `scripts/setup_wizard.sh` | One-command Pi bring-up: clones `openflight_upstream`, installs deps, discovers serial ports + HiFiBerry gain, writes `hardware.env`. |
 | `live_client.py` | WebSocket helper for `shot_simulator.py --live`. |
+| `launch_monitor_parts_list.txt` | Hardware BOM + wiring summary. |
 | `TODO.md` | Running hardware/software roadmap. |
 
 ## Setup

@@ -1,0 +1,102 @@
+# DIY Launch Monitor — Complete Parts List
+
+Dual-channel radar launch monitor: TI IWR6843 (geometry) + RFbeam K-MC1 (spin),
+Raspberry Pi 5 + HiFiBerry ADC capture, OpenFlight-compatible software stack.
+
+Links are direct product pages where verified, and search links for commodity
+items (pick any well-reviewed option matching the spec).
+
+---
+
+## Radar
+
+| # | Part | Price | Link |
+|---|------|-------|------|
+| 1 | TI IWR6843ISK evaluation board — **confirm Rev C or later** | ~$135 | [TI.com product page](https://www.ti.com/product/IWR6843ISK/part-details/IWR6843ISK) · [Mouser search](https://www.mouser.com/c/?q=IWR6843ISK) |
+| 2 | RFbeam K-MC1-RFB-00D, 5V standard version | $270 | [DigiKey (verified in stock)](https://www.digikey.com/en/products/detail/rfbeam-microwave-gmbh/K-MC1-RFB-00D/13151975) · [RFbeam product page + datasheet](https://rfbeam.ch/product/k-mc1-radar-transceiver/) |
+
+## Compute + capture
+
+| # | Part | Price | Link |
+|---|------|-------|------|
+| 3 | Raspberry Pi 5, 4GB | ~$60 | [Amazon search](https://www.amazon.com/s?k=raspberry+pi+5+4gb) |
+| 4 | Official Raspberry Pi 27W USB-C PSU | ~$12 | [Amazon search](https://www.amazon.com/s?k=raspberry+pi+5+official+27w+power+supply) |
+| 5 | Pi 5 active cooler or fan case | ~$10 | [Amazon search](https://www.amazon.com/s?k=raspberry+pi+5+active+cooler) |
+| 6 | High-endurance microSD, 64GB+ | ~$12 | [Amazon search](https://www.amazon.com/s?k=high+endurance+microsd+64gb) |
+| 7 | HiFiBerry DAC2 ADC Pro (stereo 3.5mm line-in) | ~$65 | [HiFiBerry shop](https://www.hifiberry.com/shop/) — pick "DAC2 ADC Pro" (current-gen; same overlay/PGA range as the older DAC+ ADC Pro, but Pi 5 needs `force_eeprom_read=0` added alongside the dtoverlay -- see scripts/setup_wizard.sh) |
+| 8 | Extra-tall GPIO stacking header (HAT clearance) | ~$6 | [Amazon search](https://www.amazon.com/s?k=raspberry+pi+tall+stacking+gpio+header+2x20) |
+
+## Cables + electrical
+
+| # | Part | Price | Link |
+|---|------|-------|------|
+| 9 | 3.5mm **TRS** male-male shielded cable, 1m — I=tip, Q=ring, GND=sleeve | ~$8 | [Amazon search](https://www.amazon.com/s?k=3.5mm+trs+male+to+male+shielded+cable+1m) |
+| 10 | Snap-on ferrite choke kit, assorted bores | ~$8 | [Amazon search](https://www.amazon.com/s?k=snap+on+ferrite+choke+kit+assorted) |
+| 11 | Micro-USB cable, data-rated, 1m (Pi → ISK) | ~$7 | [Amazon search](https://www.amazon.com/s?k=micro+usb+data+cable+1m) |
+| 12 | USB battery pack, 5V (clean K-MC1 power) | ~$15 | [Amazon search](https://www.amazon.com/s?k=usb+power+bank+5v) |
+| 13 | 2.54mm header pins + female crimp jumper pigtails | ~$5 | [Amazon search](https://www.amazon.com/s?k=2.54mm+header+pins+dupont+jumper+wire+kit) |
+
+## Mounting
+
+| # | Part | Price | Link |
+|---|------|-------|------|
+| 14 | Base plate: acrylic/plywood ~30×20cm or open-front ABS project box | ~$12 | [Amazon search](https://www.amazon.com/s?k=abs+project+box+enclosure+150x100) |
+| 15 | Nylon M2/M3 standoff assortment kit | ~$10 | [Amazon search](https://www.amazon.com/s?k=nylon+standoff+assortment+kit+m2+m3) |
+| 16 | Rubber / Sorbothane anti-vibration feet | ~$8 | [Amazon search](https://www.amazon.com/s?k=sorbothane+anti+vibration+feet) |
+| 17 | Wedge shim or adjustable feet (10–15° up-tilt) | ~$5 | hardware store |
+| 18 | Stick-on bubble level | ~$4 | [Amazon search](https://www.amazon.com/s?k=stick+on+bubble+level+small) |
+| 19 | 1/4"-20 T-nut or tripod mounting plate (optional) | ~$5 | [Amazon search](https://www.amazon.com/s?k=1%2F4-20+t+nut+tripod+plate) |
+
+## Bench + validation
+
+| # | Part | Price | Link |
+|---|------|-------|------|
+| 20 | Piezo disc pack (vibration diagnostic) | ~$6 | [Amazon search](https://www.amazon.com/s?k=piezo+disc+elements+pack) |
+| 21 | Metal / foil tape roll (ball marking) | ~$5 | [Amazon search](https://www.amazon.com/s?k=aluminum+foil+tape) |
+| 22 | Drill or PWM motor + rod for spin rig | ~$0–20 | likely owned |
+| 23 | Titleist RCT balls (dozen) | ~$55 | **deferred** — order only if the rung-3 bench test says marking matters: [Titleist RCT](https://www.titleist.com/golf-balls/pro-v1-rct) |
+
+## Deferred / phase 3
+
+| # | Part | Price | Link |
+|---|------|-------|------|
+| 24 | TI DCA1000EVM raw ADC capture card | ~$600 | **deferred** — [TI.com](https://www.ti.com/tool/DCA1000EVM) |
+| 25 | CDM324 Doppler modules ×2 (optional early scout) | ~$20 | [Amazon search](https://www.amazon.com/s?k=cdm324+doppler+radar+module) |
+
+## Safety
+
+| # | Part | Price | Link |
+|---|------|-------|------|
+| 26 | Impact net rated for full-speed driver | site-dependent | verify existing bay netting before first swing |
+
+---
+
+**Core build total (items 1–21): ~$665**
+
+## Wiring summary
+
+1. **K-MC1 pin strip** (the build's only soldering — 4 wires): VCC → battery 5V ·
+   GND → shared ground · **AC-output** IF I → TRS tip · IF Q → TRS ring
+   (sleeve = ground) — AC, not DC, per LM-2's wiring decision (see
+   openflight_iwr6843/README.md). Check the datasheet's unused-pin guidance
+   for the VCO/FM input before soldering.
+2. **TRS cable** (ferrite clipped near HAT end) → HiFiBerry 3.5mm line-in.
+   No impedance-matching needed: K-MC1 output is 100 ohm, DAC2 ADC Pro input
+   is 20kOhm/pin (~200:1, verified against both datasheets).
+3. **HiFiBerry** → stacked on Pi 5 GPIO header.
+4. **IWR6843ISK** → one micro-USB to the Pi (carries power + both serial ports).
+
+Both radar boards mount vertically on standoffs, antennas facing the tee,
+coplanar and aimed identically. Plate sits on rubber feet 1–1.5m behind the
+ball on the target line, front edge shimmed 10–15° up, verified level side-to-side.
+
+## Software (all free)
+
+- TI mmWave SDK + Demo Visualizer (bring-up rung 1)
+- OpenFlight (server, physics, UI): https://github.com/jewbetcha/openflight
+  (vendored locally at ./openflight_upstream for shot_simulator.py to import)
+- The `openflight_iwr6843` package from this design: TLV parser, Kalman trackers,
+  spin decoder, session modes, validation harness
+- `shot_simulator.py` (repo root): plaintext ball speed/spin/launch angle ->
+  full RK4 physics flight sim, optionally pushed live into a running
+  OpenFlight server. See its docstring and openflight_iwr6843/README.md.

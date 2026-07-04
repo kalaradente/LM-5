@@ -1,5 +1,5 @@
 """
-gain.py — read/set the HiFiBerry DAC+ADC Pro's K-MC1 capture gain via ALSA,
+gain.py — read/set the HiFiBerry DAC2 ADC Pro's K-MC1 capture gain via ALSA,
 using pyalsaaudio (https://larsimmisch.github.io/pyalsaaudio/).
 
 Linux/ALSA only. This does not import on macOS (no libasound) — it's meant
@@ -21,11 +21,21 @@ confirm rather than trust the default) and the real card index (see
 `aplay -l` / `arecord -l`). Pass both explicitly with --card/--control until
 you've hardcoded the confirmed values here.
 
-Per the K-MC1/HiFiBerry DAC+ADC Pro datasheets: the Pro's capture PGA covers
--12dB to +32dB in 0.5dB steps; the K-MC1 already applies a fixed 47dB IF
-preamp per channel ahead of that. Start low (near -12dB) for close-range
-bench tests (drill rig) to avoid clipping; a real departing ball at ~1.5m
-is a much weaker return and will likely need more gain.
+Per the K-MC1 (RFbeam datasheet, Rev J 11/2022) and DAC2 ADC Pro (PCM1863)
+datasheets:
+  - K-MC1 AC output: 32dB fixed IF amplifier gain, 100 ohm output impedance,
+    40Hz-15kHz -3dB bandwidth (this is the output we wire — see session.py).
+  - DAC2 ADC Pro: -12dB to +32dB capture PGA in 0.5dB steps, 20kOhm input
+    impedance per pin. 20kOhm : 100 ohm is a ~200:1 ratio -- loading loss is
+    negligible (~0.04dB), no impedance concern.
+  - Net signal chain gain at 0dB PGA is a fixed 32dB from the K-MC1 alone;
+    whether that's already enough, too much, or needs the PGA's headroom on
+    top is NOT something to assume -- it depends on real target range/RCS.
+    Start low (near -12dB) for the close-range drill-rig bench test
+    specifically to be safe against clipping, then adjust from what you
+    actually measure. Don't extrapolate that starting point to real
+    departing-ball range without checking -- it's a cautious default, not a
+    calculated one.
 """
 
 from __future__ import annotations

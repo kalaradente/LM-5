@@ -112,20 +112,34 @@ fi
 
 # ---- 3. HiFiBerry kernel overlay ------------------------------------------
 
-log "Step 3: HiFiBerry kernel overlay"
+log "Step 3: HiFiBerry kernel overlay (DAC2 ADC Pro, or the older DAC+ ADC Pro -- same overlay)"
 BOOT_CONFIG=""
 for candidate in /boot/firmware/config.txt /boot/config.txt; do
     [ -f "$candidate" ] && BOOT_CONFIG="$candidate" && break
 done
 if [ -z "$BOOT_CONFIG" ]; then
     warn "No /boot/firmware/config.txt or /boot/config.txt -- not on a Pi, skipping."
-elif grep -q "^dtoverlay=hifiberry-dacplusadcpro" "$BOOT_CONFIG" 2>/dev/null; then
-    log "hifiberry-dacplusadcpro overlay already enabled in $BOOT_CONFIG."
 else
-    log "Adding dtoverlay=hifiberry-dacplusadcpro to $BOOT_CONFIG (needs sudo)."
-    echo "dtoverlay=hifiberry-dacplusadcpro" | sudo tee -a "$BOOT_CONFIG" >/dev/null
-    warn "REBOOT REQUIRED before the HiFiBerry card will show up in aplay -l."
-    NEED_REBOOT=1
+    if grep -q "^dtoverlay=hifiberry-dacplusadcpro" "$BOOT_CONFIG" 2>/dev/null; then
+        log "hifiberry-dacplusadcpro overlay already enabled in $BOOT_CONFIG."
+    else
+        log "Adding dtoverlay=hifiberry-dacplusadcpro to $BOOT_CONFIG (needs sudo)."
+        echo "dtoverlay=hifiberry-dacplusadcpro" | sudo tee -a "$BOOT_CONFIG" >/dev/null
+        NEED_REBOOT=1
+    fi
+    # Pi 5 specific: the card's onboard ID EEPROM can conflict with the
+    # dtoverlay line above and silently prevent it from loading. Confirmed
+    # against HiFiBerry's own docs/forum for DAC2 ADC Pro on Pi 5.
+    if grep -q "^force_eeprom_read=0" "$BOOT_CONFIG" 2>/dev/null; then
+        log "force_eeprom_read=0 already set in $BOOT_CONFIG."
+    else
+        log "Adding force_eeprom_read=0 to $BOOT_CONFIG (Pi 5 + HiFiBerry EEPROM/overlay conflict workaround, needs sudo)."
+        echo "force_eeprom_read=0" | sudo tee -a "$BOOT_CONFIG" >/dev/null
+        NEED_REBOOT=1
+    fi
+    if [ "$NEED_REBOOT" -eq 1 ]; then
+        warn "REBOOT REQUIRED before the HiFiBerry card will show up in aplay -l."
+    fi
 fi
 
 # ---- 4. Serial port permissions (dialout group) --------------------------

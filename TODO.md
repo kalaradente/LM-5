@@ -15,12 +15,23 @@ Running list of open items. Newest relevant item first per section.
       under real load to test meaningfully — can't verify this from a
       synthetic test, only on the Pi once it arrives.
 
-- [ ] Confirm HiFiBerry DAC+ADC Pro's current Pi 5 overlay/compatibility
-      status directly on hifiberry.com before ordering (Pi 5 changed kernel
-      overlay conventions since earlier Pi generations).
+- [x] HiFiBerry board decision + Pi 5 compatibility: get the **DAC2 ADC Pro**
+      (current-gen part, same `dtoverlay=hifiberry-dacplusadcpro` and PGA
+      range as the older DAC+ ADC Pro, PCM1863-based). Confirmed Pi 5 needs
+      `force_eeprom_read=0` in config.txt alongside the dtoverlay line, or
+      the card's onboard ID EEPROM can conflict with the overlay and it
+      won't load. See scripts/setup_wizard.sh step 3.
 
-- [ ] Verify K-MC1 IF output level / DC bias against HiFiBerry's max input
-      level and AC-coupling, per datasheet, before first power-on.
+- [x] K-MC1 <-> DAC2 ADC Pro impedance/level compatibility, verified against
+      both datasheets (RFbeam K-MC1 Rev J 11/2022; TI PCM1863): K-MC1 output
+      impedance 100 ohm vs DAC2 ADC Pro input impedance 20kOhm per pin --
+      ~200:1, loading loss ~0.04dB, no concern. K-MC1 AC output DC offset
+      (Vcc/2 +/-0.5V) is irrelevant to clipping risk since the HiFiBerry
+      line-in is itself AC-coupled and removes it before the ADC ever sees
+      it. NOT yet verified: actual signal AMPLITUDE for a real departing
+      ball at real range/RCS -- that's a bench-test question, not a
+      datasheet one (see gain.py's docstring, corrected 32dB AC gain figure
+      -- was wrongly stated as 47dB earlier).
 
 - [ ] Confirm IWR6843ISK board revision is C or later (needed for direct
       DCA1000 connection later, skipping the MMWAVEICBOOST carrier).
