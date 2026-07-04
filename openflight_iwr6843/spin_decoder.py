@@ -44,6 +44,44 @@ MAINS_NOTCH_HZ = 60.0         # Mains hum frequency to notch out of the signal.
                                # Africa, Australia use 50Hz mains power).
 MAINS_NOTCH_Q = 20.0          # narrow notch: kill the hum, spare neighbors
 
+# --- K-MC1 AC/DC-wiring auto-detect (provenance tag only) ---
+KMC1_LOWBAND_HZ = 35.0        # probe band 0<f<35Hz: safely inside the AC output's
+                               # 40Hz -3dB stopband, so real AC captures have ~no
+                               # signal here while DC captures do.
+KMC1_DC_RATIO = 6.0           # sub-35Hz mean level > this x the spectral floor
+                               # => DC wiring. Placeholder — CALIBRATE against a
+                               # known AC capture and a known DC capture; see
+                               # detect_kmc1_output().
+
+
+def detect_kmc1_output(z: np.ndarray, fs: int = FS,
+                       cutoff_hz: float = KMC1_LOWBAND_HZ,
+                       dc_ratio: float = KMC1_DC_RATIO) -> str:
+    """Infer whether the K-MC1's AC or DC output pins are wired, from the
+    capture itself — the DC output passes content below 40Hz, the AC output
+    rolls it off. Returns "dc" or "ac". Provenance tag ONLY; does not affect
+    decoding (filtering is unconditional, see clean_iq / session.py).
+
+    Measures mean spectral level in 0<f<cutoff_hz relative to the broadband
+    median floor: broadband ADC noise sits at ~1x the floor there regardless
+    of wiring, so real low-frequency signal (present on DC, rolled off on AC)
+    is what pushes the ratio up.
+
+    Caveat — needs bench calibration: the HiFiBerry line-in is itself
+    AC-coupled, so the K-MC1 DC output's true 0Hz bias is blocked before the
+    ADC. This relies on energy in the (HiFiBerry-corner .. 35Hz) window, whose
+    strength on a real DC capture is an empirical question. A too-clean DC
+    capture can read as "ac" — a benign miss, since it's metadata only.
+    """
+    z = z - np.mean(z)                              # measure band energy, not offset
+    n = len(z)
+    spec = np.abs(np.fft.fft(z * np.hanning(n)))
+    freqs = np.fft.fftfreq(n, 1 / fs)
+    low = (np.abs(freqs) < cutoff_hz) & (freqs != 0)
+    floor = float(np.median(spec)) + 1e-12
+    low_level = float(np.mean(spec[low])) if low.any() else 0.0
+    return "dc" if low_level > dc_ratio * floor else "ac"
+
 
 def clean_iq(z: np.ndarray, fs: int = FS, highpass: bool = True,
             notch_mains: bool = True) -> np.ndarray:

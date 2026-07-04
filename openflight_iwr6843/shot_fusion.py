@@ -26,7 +26,7 @@ try:
 except (ImportError, OSError):                        # allow offline replay
     sd = None
 
-from .spin_decoder import decode, FS
+from .spin_decoder import decode, detect_kmc1_output, FS
 
 SPIN_CONF_FLOOR = 0.35        # below this, fall back to inference
 AUDIO_PRE = 0.05              # s of audio before impact to include
@@ -115,6 +115,10 @@ class ShotFuser:
             # sits in the spin band. So the AC/DC switch needs no software
             # change; see session.py.
             result = decode(z)
+            # Auto-detect AC vs DC wiring from the capture and tag the shot
+            # (provenance only; the switch doesn't change decoding). Overrides
+            # any static session.kmc1_output with what the signal actually shows.
+            shot["kmc1_output"] = detect_kmc1_output(z)
             if result.get("ok") and \
                     result.get("confidence", 0) >= SPIN_CONF_FLOOR:
                 shot.update(spin_rpm=round(result["spin_rpm"]),
