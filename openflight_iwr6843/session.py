@@ -24,27 +24,20 @@ class SessionConfig:
     environment: Environment = "indoor"
     ball_type: BallType = "plain"
     kmc1_output: KMC1OutputMode = "dc"
-    # Bandwidths below are datasheet-confirmed K-MC1 -3dB figures.
-    # "ac"  — wired to the K-MC1's AC output pins (40Hz-15kHz, -3dB).
-    #         Hardware already rolls off near-DC clutter; software filtering
-    #         mostly redundant, but the AC path attenuates spin tones below
-    #         ~2400rpm (40Hz) — the K-MC1's amplifier does this in analog,
-    #         before your ADC ever sees the signal, so software can't undo it.
-    # "dc"  — wired to the K-MC1's DC output pins (0Hz-500kHz, -3dB).
-    #         Full spin band intact including low-driver-spin cases, but
-    #         carries DC offset + mains hum that software must remove
-    #         (see spin_decoder.clean_iq). This is the default: it's the
-    #         complete-spectrum choice, and the cleanup is well-understood,
-    #         cheap, and already wired into decode().
-
-    @property
-    def spin_filter_kwargs(self) -> dict:
-        """Passed to spin_decoder.decode(). AC wiring already band-limited
-        by the module itself, so skip redundant software filtering; DC
-        wiring needs both stages to recover a clean signal."""
-        if self.kmc1_output == "ac":
-            return {"highpass": False, "notch_mains": False}
-        return {"highpass": True, "notch_mains": True}
+    # Which K-MC1 output pins feed the TRS cable — a wiring + provenance
+    # choice ONLY; it does not change the software filtering. spin_decoder's
+    # clean_iq runs the same for either output, so you can flip the physical
+    # AC/DC switch mid-session with no software change:
+    #   - DC output (0Hz-500kHz): full spin band, but carries DC offset +
+    #     mains hum that clean_iq removes.
+    #   - AC output (40Hz-15kHz): hardware already rolls off below 40Hz, so
+    #     clean_iq's DC-removal + 20Hz high-pass are no-ops there; only its
+    #     60Hz mains notch acts — and that's wanted, since 60Hz hum passes
+    #     AC coupling (60Hz > 40Hz corner) and lands in the spin band
+    #     (~3600rpm). AC's one real cost: it attenuates spin below ~2400rpm
+    #     (40Hz) in hardware, which software cannot undo. DC is the default
+    #     for that reason. (Datasheet-confirmed -3dB bandwidths.)
+    # This field is recorded as a shot tag (see tags()) for later analysis.
 
     # ---- geometry channel presets ------------------------------------
 

@@ -96,6 +96,9 @@ class ShotFuser:
                  session=None):
         self.publish = publish
         self.audio = audio
+        # Reserved for future session-driven presets (spin_conf_floor,
+        # capture window — see TODO). No longer used for filter selection:
+        # cleaning is unconditional now (see on_geometry).
         self.session = session          # session.SessionConfig, optional
 
     def on_geometry(self, geom: dict):
@@ -105,9 +108,13 @@ class ShotFuser:
         if self.audio is not None:
             z = self.audio.window(geom["t_impact"], AUDIO_PRE, AUDIO_POST)
             self._archive_audio(z, geom.get("capture_id"))
-            filt_kwargs = self.session.spin_filter_kwargs if self.session \
-                else {}
-            result = decode(z, **filt_kwargs)
+            # Cleaning is unconditional and identical for either K-MC1 output:
+            # on an AC capture, clean_iq's DC-removal + 20Hz high-pass are
+            # no-ops (nothing below the 40Hz corner) and only its 60Hz notch
+            # acts — which is wanted, since 60Hz hum survives AC coupling and
+            # sits in the spin band. So the AC/DC switch needs no software
+            # change; see session.py.
+            result = decode(z)
             if result.get("ok") and \
                     result.get("confidence", 0) >= SPIN_CONF_FLOOR:
                 shot.update(spin_rpm=round(result["spin_rpm"]),
