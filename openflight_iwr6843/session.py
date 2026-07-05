@@ -33,7 +33,11 @@ class SessionConfig:
     @property
     def range_gate(self) -> tuple[float, float]:
         # Indoor: flight ends at the net; beyond it is wall/net clutter.
-        # Outdoor: extend to harvest more trajectory fixes.
+        # Outdoor: extend to harvest more trajectory fixes -- BUT (audit
+        # D-5) the current golf.cfg profile has a hard R_max of 6.09 m
+        # (ADC-rate-bound), so the 15 m gate buys no real range until an
+        # outdoor profile variant (slower slope / faster sampling) exists.
+        # Kept as declared intent; harmless meanwhile. See audit-log.md D-5.
         return (0.3, 6.0) if self.environment == "indoor" else (0.3, 15.0)
 
     @property

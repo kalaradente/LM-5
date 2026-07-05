@@ -32,8 +32,12 @@ FS = 96_000
 # 24.125-vs-24.150 nominal choice are both well inside other error sources.)
 WAVELENGTH = 0.012427                  # 24.125 GHz (RFbeam K-MC1 datasheet)
 SPIN_BAND = (25.0, 220.0)              # Hz rotation: ~1500-13000 rpm
-CARRIER_BAND = (1_216.0, 16_000.0)     # Hz: plausible ball tones (outbound).
-                                        # Lower edge = 17 mph (7.6 m/s), matching
+CARRIER_BAND = (1_223.0, 16_000.0)     # Hz: plausible ball tones (outbound).
+                                        # Lower edge = 17 mph (7.6 m/s) at the
+                                        # corrected 24.125 GHz wavelength
+                                        # (2*7.6/0.012427 = 1223 Hz; was 1216
+                                        # from the old 24.0 GHz figure),
+                                        # matching
                                         # iwr6843_source.BALL_MIN_SPEED. Upper
                                         # edge (16kHz ~ 224mph) sits just past the
                                         # K-MC1 AC output's 15kHz -3dB ceiling
