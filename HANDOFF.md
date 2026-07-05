@@ -1,7 +1,11 @@
 # LM-2 — Session Handoff / State of Affairs
 
-_Written 2026-07-04 to hand off to a fresh Claude instance. Read this first,
-then `README.md`, `TODO.md`, and `openflight_iwr6843/README.md`._
+_Written 2026-07-04, last updated 2026-07-05 (after audits #1-#5). Read
+this first, then `openflight_iwr6843/docs/audit-log.md` (the running audit
+record — REQUIRED reading before assuming anything about open issues),
+`TODO.md`, and `openflight_iwr6843/README.md`. Auto-memory also carries
+project context across sessions (repo layout, pypdf-for-PDFs, the audit
+framework, "physics first when tuning stalls")._
 
 ---
 
@@ -182,29 +186,48 @@ patch. On a dev machine, symlink it for testing:
 
 ---
 
-## 7. Biggest OPEN / UNVERIFIED items (see TODO.md for full list)
+## 7. Standing state after audits #1-#5 (2026-07-05)
 
-- **TLV frame-header length: DECIDED — 40 bytes** (8 magic + 32 header),
-  2026-07-04. Went with the mmWave community/forum consensus and de-facto
-  OOB-demo standard (also matches summing TI's own listed fields); TI's doc's
-  separate "44" is treated as a later-SDK variant. `FRAME_HEADER_LEN = 32`.
-  Still validated empirically at **bring-up rung 2 (parser vs TI Demo
-  Visualizer)** — wrong length = garbage/missing points; bump to 36 there if
-  it fails.
-- **Gain amplitude** for a real departing ball is unknown (datasheet gives
-  impedance/gain but not real-target signal level). Bench-test question.
-- **`infer_spin` coefficients** and **`spin_conf_floor`** are placeholders
-  awaiting real truth data.
-- **`SessionConfig` now fully wired** into `IWR6843Source` + `ShotFuser`
-  (geometry range gate/capture window, chip-side cfg rewriting in
-  `configure()`, spin floor/audio window, per-shot env/ball tags;
-  `run_iwr6843.py` has `--outdoor`/`--ball` flags). The `cfarCfg`
-  thresholdScale-in-dB semantics are confirmed against the primary TI source
-  (mmWave SDK User Guide 3.6 LTS p.28) — dB, float, max 100, additive in the
-  log-domain CUT test, so the outdoor -3 dB nudge is a real -3 dB loosen.
-- **SOP switch settings ARE now confirmed** from TI docs (see
-  firmware-flashing.md): only S1.1 changes between flash/functional; SOP is
-  boot-sensed (must reset after flipping).
+**Five audits run, four methodologies, all findings closed** (full detail:
+`docs/audit-log.md`): F-series (code reading), D-series (datasheet
+verification), E-series (execution — "every button pressable"), S-series
+(synthesized real stimuli: TLV byte streams, painted audio ring, live TCP
++ SocketIO wires). Audit #4 is recorded as FAILED (interrupted, no
+findings) — superseded by #5. Highlights a fresh session should know:
+
+- **The classifier is track-based** (F-7): ball = ballistic suffix, club =
+  fastest pre-birth row; two of Johnny's rules are enforced invariants —
+  everything at-or-behind ball birth is not the ball, and **launch angle
+  can never be < 0** (E-8: clamp + confidence penalty + raw preserved).
+- **The spin channel is sealed against the descending clubhead** (E-9:
+  10 ms guard window + median-seeded carrier tracker) and never
+  self-triggers — decode runs only on the 6843's shot callback. No
+  post-impact clubhead movement contributes to any metric.
+- **A dead/unplugged UART no longer wedges acquisition** (S-1: idle-read
+  guard ends the stream loudly instead of spinning at 100% CPU forever).
+- **Security property S-2**: in hardware posture a web client cannot
+  inject fake shots (`simulate_custom_shot` is mock-only by design); both
+  postures pressed against a LIVE SocketIO server.
+- **Known measurement limits, documented not hidden**: chip-class launch
+  reads ~10° low (club/ball blend below the sensor's separability floor —
+  confidence correctly collapses); driver launch scatters ±2° (27 fixes in
+  the 6 m gate; the outdoor profile's ~43 fixes is the lever).
+- Every shot is fully logged locally: `captures/radar_<id>.npz` +
+  `audio_<id>.npy` + one JSON line in `captures/shots.jsonl` (feeds
+  `validate.py` directly).
+
+**Still open (all hardware-gated):**
+- **Place the K-MC1-RFB-00D order** (5V variant! see
+  `docs/kmc1-harness.md` — Pin 1 /Enable must be hardwired to GND, ADC
+  input mux must be set, PGA starts at 0 dB).
+- **D-8 at build**: K-MC1 rotation — 25° beam axis vertical.
+- Bench-owned numbers: real departing-ball signal level, `infer_spin`
+  coefficients, `spin_conf_floor` per ball type, audio/radar clap-test
+  latency, plateau-clip threshold, chip launch accuracy.
+- TLV 40-byte header + `compRangeBias` identity string + both chirp cfgs:
+  final confirmation at bring-up rungs 2-3 vs the flashed SDK 3.6.
+- Exact xWR6843ISK board outline (measure the real board before machining
+  the plate); board rev C-or-later check.
 
 ---
 
@@ -225,6 +248,8 @@ Then on the Pi: `git clone` LM-2 → `./scripts/setup_wizard.sh` →
 
 ---
 
-## 9. Changelog (git history, newest first)
+## 9. Changelog
 
-See the table on the next page / `git log`. 14 commits, all 2026-07-03/04.
+`git log` is the changelog — ~30 commits through 2026-07-05, each message
+written to carry the full WHY so the audit trail reconstructs from history
+alone. The five audit entries in `docs/audit-log.md` index the big arcs.
