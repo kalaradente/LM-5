@@ -13,6 +13,44 @@ Primary sources live at `~/Desktop/datasheets/` — see
 
 ---
 
+## Audit #3 — 2026-07-06 (every-button execution audit)
+
+New emphasis per Johnny: don't re-read the code paths, PRESS them — every
+CLI entry point and flag, every failure path, every cross-interface object
+constructed for real. 45 buttons pressed (34 hardware-free + 11 requiring
+the upstream symlink). Findings E-1…E-5, **all fixed same session**.
+
+| ID | Sev | Button | Defect |
+|----|-----|--------|--------|
+| E-1 | MED | `analyze([])` (offline replay of an empty/corrupt archive) | IndexError crash instead of returning None. Guarded. |
+| E-2 | MED | `decode()` on a short window (truncated audio archive, tiny capture) | scipy stft ValueError ("noverlap must be less than nperseg") — scipy shrinks nperseg to the input but our fixed noverlap didn't follow. `_ridge` now clamps both (identical hop in the normal case) and returns no-carrier below 64 samples. Verified graceful at 16/64/300/2000 samples; selftest bit-identical. |
+| E-3 | MED | `IWR6843Monitor(...)` keyword construction | Parameter names read `(geom_port, data_port)` while main() passed `(cli_port, geom_port)` — positional wiring was correct by accident; any keyword caller following the names would have swapped the serial ports. Renamed to match reality. |
+| E-4 | LOW | run_iwr6843 docstring | Referenced flags that don't exist (`--data-port`, `--control`). Corrected to the real ones. |
+| E-5 | LOW | `AUDIO_DEVICE=2` in hardware.env | sounddevice treats a numeric STRING as a device-name substring, not an index — "2" would match any device with a 2 in its name. main() now converts digit-strings to int. |
+
+Pressed and verified-good (no defect): every simulator flag combination
+(spin: defaults/full-flags/--missing-fundamental/--sweep; geometry:
+default/--verbose/--sweep), spin_decoder --selftest + wav + --bench +
+wrong-sample-rate error message, gain.py's all subcommands failing
+gracefully off-Linux + argparse rc=2 with none, session.from_args,
+validate.py on csv AND jsonl including row-count-mismatch warning and
+missing-column skip, archive→load_capture→analyze round trip,
+BallTracker/FreqTracker at n=1/2, decode on zeros (both modes), cold
+AudioRing window decodes to not-ok, fuser jsonl logging on the audio=None
+path, infer_spin edge clipping, GSPro unconnected send raising
+ConnectionError (⊂ OSError — the monitor's handler covers it), GSPro
+connect-refused raising OSError (run_iwr6843 continues without GSPro),
+close-before-connect, run_iwr6843 --help / missing-ports exit /
+unknown-club exit, shot_simulator all flags + bad-club exit, upstream Shot
+constructed from both a full and a minimal fused dict with
+smash_factor/club_speed_ms/estimated_carry_yards properties exercised,
+get_session_stats at 0 and 2 shots, ofserver surface present, live_client
+emit fields all present in the upstream patch, patch reverse-check clean
+against the current upstream checkout, hardware.env written keys ==
+read keys.
+
+---
+
 ## Audit #2 — 2026-07-05 (all datasheets re-read, top-down)
 
 Every document in `~/Desktop/datasheets/` re-read via pypdf extraction.

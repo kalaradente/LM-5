@@ -13,9 +13,10 @@ by hand: session logger init, the ballistics_enabled flag, and injecting an
 IWR6843Monitor in place of RollingBufferMonitor/MockLaunchMonitor before
 starting the same Flask-SocketIO app.
 
-REMINDER: --geom-port/--data-port/--control below have no safe defaults --
-they depend on your actual USB enumeration order and ALSA card, which you
-have not confirmed yet. Find them for real before trusting any default:
+REMINDER: --cli-port/--geom-port/--audio-device below have no safe
+defaults -- they depend on your actual USB enumeration order and ALSA
+card, which you have not confirmed yet. Find them for real before
+trusting any default:
     ls /dev/ttyUSB*                                  # geometry ports -- the
                                                        # standalone ISK's USB
                                                        # runs through a SiLabs
@@ -125,9 +126,13 @@ class IWR6843Monitor:
     implement), so the existing club-select/session/clear-session UI
     controls keep working against real hardware."""
 
-    def __init__(self, geom_port: str, data_port: str, cfg_path: str,
+    def __init__(self, cli_port: str, data_port: str, cfg_path: str,
                  audio_device=None, gspro: Optional[GSProClient] = None,
                  session: Optional[SessionConfig] = None):
+        # Param names fixed in audit E-3: they used to read (geom_port,
+        # data_port) while main() passed (cli_port, geom_port) -- the
+        # positional wiring was correct but any keyword caller following
+        # the names would have swapped the serial ports.
         self._shots: List[Shot] = []
         self._current_club = ClubType.DRIVER
         self._shot_callback: Optional[Callable[[Shot], None]] = None
@@ -135,7 +140,7 @@ class IWR6843Monitor:
         self.audio = AudioRing(device=audio_device)
         self.fuser = ShotFuser(publish=self._on_fused, audio=self.audio,
                                 session=self.session)
-        self.source = IWR6843Source(geom_port, data_port, cfg_path,
+        self.source = IWR6843Source(cli_port, data_port, cfg_path,
                                      on_geometry=self.fuser.on_geometry,
                                      session=self.session)
         self._thread: Optional[threading.Thread] = None
@@ -302,8 +307,15 @@ def main() -> None:
                         "without GSPro", args.gspro_host, args.gspro_port, e)
             gspro = None
 
+    # sounddevice treats a numeric STRING as a device-name substring, not
+    # an index -- hardware.env's AUDIO_DEVICE=2 must become int 2 or it
+    # would match any device with "2" in its name (audit E-5).
+    audio_device = args.audio_device
+    if isinstance(audio_device, str) and audio_device.isdigit():
+        audio_device = int(audio_device)
+
     monitor = IWR6843Monitor(args.cli_port, args.geom_port, args.cfg,
-                              audio_device=args.audio_device, gspro=gspro,
+                              audio_device=audio_device, gspro=gspro,
                               session=session)
     monitor.set_club(club)
     ofserver.monitor = monitor

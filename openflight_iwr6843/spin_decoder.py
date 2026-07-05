@@ -82,8 +82,15 @@ def load_iq(path: str, fs: int = FS) -> np.ndarray:
 
 def _ridge(z: np.ndarray, fs: int):
     """Per-frame strongest tone in CARRIER_BAND (the noisy measurements)."""
-    nper = 2048
-    f, t, S = sig.stft(z, fs=fs, nperseg=nper, noverlap=nper - 256,
+    # Clamp to the input length (audit E-2): a truncated audio archive or a
+    # tiny capture window used to hit scipy's "noverlap must be less than
+    # nperseg" ValueError (scipy shrinks nperseg to len(z) but our fixed
+    # noverlap didn't follow). Short windows now degrade to a no-carrier
+    # result instead of an exception.
+    nper = min(2048, len(z))
+    if nper < 64:
+        return np.array([]), np.array([])
+    f, t, S = sig.stft(z, fs=fs, nperseg=nper, noverlap=nper - max(nper // 8, 1),
                        return_onesided=False)
     f = np.fft.fftshift(f)
     S = np.fft.fftshift(np.abs(S), axes=0)

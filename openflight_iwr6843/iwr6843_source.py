@@ -487,6 +487,8 @@ class IWR6843Source:
         return best
 
     def analyze(self, capture: list) -> Optional[dict]:
+        if not capture:
+            return None      # empty/corrupt archive replayed offline (E-1)
         t0 = capture[0].t
         # Time base (audit F-1): radar frame numbers x framePeriodicity give
         # jitter-free relative time and inherently account for skipped
