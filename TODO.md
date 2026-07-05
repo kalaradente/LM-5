@@ -157,6 +157,13 @@ Running list of open items. Newest relevant item first per section.
 
 ## Software
 
+- [x] **Physical invariant: launch angle >= 0** (2026-07-05, Johnny's
+      rule — E-8 in audit-log.md): analyze() clamps negative launch fits
+      to 0, cuts geometry_confidence in proportion to the violation, and
+      logs the raw value (`launch_angle_raw_deg`) for replay tuning.
+      Guarded by geometry_capture_simulator on every scenario x seed +
+      the new bump_and_run worst-case scenario.
+
 - [x] **F-7 fixed (2026-07-05): track-based club/ball classification** —
       see audit-log.md F-7 for the full design. Ball = best ballistic
       suffix across spatially-clustered tracks; everything at-or-behind
@@ -287,6 +294,15 @@ Running list of open items. Newest relevant item first per section.
       documented inline in the code).
 
 ## Deferred (revisit only if bench data says so)
+
+- [ ] **Strike location + angle of attack (AoA)** — future metrics Johnny
+      wants eventually. The data is ALREADY captured per shot: the
+      pre-impact club track (the ball track's downswing prefix + club
+      tracks) is archived in every radar .npz, so AoA (club descent angle
+      at impact) and strike location (club path vs ball birth position)
+      can be developed offline against archived captures later — no new
+      capture format needed. Post-impact club data stays excluded from all
+      metrics (see E-9 / club_cands window).
 
 - [ ] DC output (or a 4-ch HAT to capture AC+DC) — revisit ONLY if real
       low-spin drill-rig bench captures prove AC-only insufficient. AC is the

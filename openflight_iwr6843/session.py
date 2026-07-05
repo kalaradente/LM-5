@@ -72,7 +72,14 @@ class SessionConfig:
     def spin_audio_window_s(self) -> tuple[float, float]:
         # (pre, post) seconds around impact for the I/Q slice. Outdoors,
         # extend post-roll: the carrier stays trackable further out.
-        return (0.05, 0.15) if self.environment == "indoor" else (0.05, 0.35)
+        # Pre is a 10 ms CLOCK-ALIGNMENT GUARD only, not a data window
+        # (audit E-9): everything before impact is the descending clubhead
+        # -- bigger RCS, in-band Doppler, poison for the carrier tracker.
+        # The old 50 ms pre-pad existed because t_impact was sloppy; F-7
+        # pinned it to +/- a frame, so the pad's only remaining job is
+        # absorbing USB-chunking jitter on the host-clock anchor (the
+        # clap-test TODO tightens even that).
+        return (0.01, 0.15) if self.environment == "indoor" else (0.01, 0.35)
 
     # ---- record keeping ----------------------------------------------
 

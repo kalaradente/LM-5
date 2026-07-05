@@ -47,7 +47,14 @@ class FreqTracker:
     def smooth(self, t: np.ndarray, f_meas: np.ndarray):
         """Returns (f_smoothed, used_mask). t in seconds, f_meas in Hz."""
         n = len(t)
-        x = np.array([f_meas[0], 0.0])
+        # Seed from the MEDIAN measurement, not the first frame (audit E-9):
+        # the decode window's opening frames can belong to the descending
+        # clubhead (bigger RCS, in-band Doppler). Seeded from frame 0 the
+        # filter locked onto the club and then gated every genuine ball
+        # tone as junk -- killing the spin read outright. The ball owns the
+        # majority of window frames, so the median lands on the ball and
+        # the gate rejects the club frames instead.
+        x = np.array([float(np.median(f_meas)), 0.0])
         P = np.diag([self.r, 200.0**2])
         H = np.array([[1.0, 0.0]])
         xs, Ps, xps, Pps, Fs = [], [], [], [], []
