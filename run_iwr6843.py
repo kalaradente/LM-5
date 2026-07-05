@@ -271,6 +271,14 @@ def main() -> None:
         args.cfg = str(REPO_ROOT / "openflight_iwr6843" / name)
         log.info("[session] chirp profile: %s", name)
 
+    # Validate ALL arguments before any side effects (audit E-7): the club
+    # check used to sit after session-logger init, so a rejected run still
+    # left session/radar-log files behind in ~/openflight_sessions/.
+    try:
+        club = ClubType(args.club)
+    except ValueError:
+        sys.exit(f"error: unknown club '{args.club}'")
+
     ofserver.ballistics_enabled = args.ballistics
     ofserver.mock_mode = False
 
@@ -287,11 +295,6 @@ def main() -> None:
                         "ballistics": args.ballistics, **session.tags()},
                 mode="iwr6843",
             )
-
-    try:
-        club = ClubType(args.club)
-    except ValueError:
-        sys.exit(f"error: unknown club '{args.club}'")
 
     gspro = None
     if args.gspro_host:
