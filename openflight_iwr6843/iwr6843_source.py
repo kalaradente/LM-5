@@ -625,6 +625,20 @@ class IWR6843Source:
         agree = 1.0 - min(1.0, abs(folded - v_f[k0]) /
                           max(v_f[k0], 1e-6))
 
+        # Physical floor (Johnny's rule): launch angle can never be < 0 --
+        # the ball leaves the GROUND. A negative estimate is measurement
+        # error (noise on a near-zero launch) or club-blend contamination
+        # (chip-speed shots drag the fit downward), never reality. Clamp,
+        # and use the violation as evidence: the further below zero the
+        # raw fit landed, the less the rest of this fit deserves trust
+        # (-2 deg barely dents it; -10 deg gates confidence hard). The
+        # raw value is preserved for diagnostics/replay tuning.
+        launch_raw = None
+        if launch < 0.0:
+            launch_raw = launch
+            agree *= 1.0 / (1.0 + abs(launch) / 5.0)
+            launch = 0.0
+
         ball_mph = speed * MPS_TO_MPH
         # Club speed = the fastest surviving pre-birth row (see the
         # candidate collection above): the arc-bottom reading is taken AT
@@ -653,14 +667,17 @@ class IWR6843Source:
         # to within ~a frame period. Sharper than the old window-start
         # anchor, so the audio slice ShotFuser cuts around it is better
         # centered on the actual strike (audit F-7).
-        return {"t_impact": t0 + t_birth, "ball_speed_mph": round(ball_mph, 1),
-                "club_speed_mph": round(club_mph, 1) if club_mph else None,
-                "launch_angle_deg": round(launch, 1),
-                "side_angle_deg": round(side, 1),
-                "smash_factor": round(smash, 2) if smash else None,
-                "lateral_accel_mps2": round(ax, 2) if ax is not None else None,
-                "n_fixes": int(used.sum()),
-                "geometry_confidence": round(agree, 2)}
+        out = {"t_impact": t0 + t_birth, "ball_speed_mph": round(ball_mph, 1),
+               "club_speed_mph": round(club_mph, 1) if club_mph else None,
+               "launch_angle_deg": round(launch, 1),
+               "side_angle_deg": round(side, 1),
+               "smash_factor": round(smash, 2) if smash else None,
+               "lateral_accel_mps2": round(ax, 2) if ax is not None else None,
+               "n_fixes": int(used.sum()),
+               "geometry_confidence": round(agree, 2)}
+        if launch_raw is not None:
+            out["launch_angle_raw_deg"] = round(launch_raw, 1)
+        return out
 
     def stop(self):
         self._running = False

@@ -23,6 +23,9 @@ Scenarios (all assertions must pass; exit code 1 otherwise):
     seven_iron      120 mph ball, 19 deg launch
     wedge_chip      18 mph ball — bottom of the speed range, where the old
                     speed-band classifier was weakest
+    bump_and_run    20 mph ball at 6 deg — flat AND slow, the geometric
+                    worst case; exercises the launch>=0 physical floor and
+                    its confidence penalty on every noise seed
     practice_swing  club only, NO ball -> analyze() must return None (the
                     old code could fabricate a phantom shot from club points)
 
@@ -169,12 +172,25 @@ def make_source() -> IWR6843Source:
     return src
 
 
+# Assertion classes -- what each scenario is entitled to expect:
+#   full  : full swing, well-separated -- speed, angles, club all asserted
+#   chip  : sub-separability speeds but lofted (z separates club/ball) --
+#           speed asserted tight, angles informational, club loose-or-None
+#   floor : flat AND slow (bump-and-run) -- club and ball hug in EVERY axis,
+#           the geometric worst case. Assert only what matters: the
+#           launch>=0 physical invariant holds, speed is in the ballpark
+#           (25%), and geometry_confidence is LOW -- the pipeline must KNOW
+#           it's blended, because downstream trusts that number.
 SCENARIOS = [
-    # name,            ball_mph, club_mph, launch, side
-    ("driver",          165.0,    110.0,    13.0,   2.0),
-    ("seven_iron",      120.0,     85.0,    19.0,  -1.5),
-    ("wedge_chip",       18.0,     16.0,    22.0,   0.0),
-    ("practice_swing",   None,    105.0,     0.0,   0.0),
+    # name,            ball_mph, club_mph, launch, side,  class
+    ("driver",          165.0,    110.0,    13.0,   2.0,  "full"),
+    ("seven_iron",      120.0,     85.0,    19.0,  -1.5,  "full"),
+    ("wedge_chip",       18.0,     16.0,    22.0,   0.0,  "chip"),
+    # bump-and-run: true launch 6 deg at chip speed -- the club-blend drag
+    # (~10 deg low at this class) pushes the RAW fit negative, exercising
+    # the physical launch>=0 floor + its confidence penalty on every seed.
+    ("bump_and_run",     20.0,     18.0,     6.0,   0.0,  "floor"),
+    ("practice_swing",   None,    105.0,     0.0,   0.0,  "none"),
 ]
 
 
@@ -183,7 +199,7 @@ def run(verbose: bool = False) -> bool:
     ok_all = True
     print(f"{'scenario':>15} {'ball(true/meas)':>18} {'launch':>13} "
           f"{'side':>12} {'club(true/meas)':>18}  result")
-    for name, ball, club, launch, side in SCENARIOS:
+    for name, ball, club, launch, side, cls in SCENARIOS:
         geom = src.analyze(synth_capture(ball, club, launch, side))
         if ball is None:
             ok = geom is None
@@ -194,6 +210,12 @@ def run(verbose: bool = False) -> bool:
             continue
         if geom is None:
             print(f"{name:>15}  FAIL: analyze() returned None")
+            ok_all = False
+            continue
+        # Physical invariant (Johnny's rule), every scenario: a golf ball
+        # leaves the ground -- reported launch can NEVER be negative.
+        if geom["launch_angle_deg"] < 0:
+            print(f"{name:>15}  FAIL: negative launch {geom['launch_angle_deg']}")
             ok_all = False
             continue
         sp_err = abs(geom["ball_speed_mph"] - ball)
@@ -249,15 +271,20 @@ def sweep(n_seeds: int = 6) -> bool:
     src = make_source()
     fails = 0
     for seed in range(n_seeds):
-        for name, ball, club, launch, side in SCENARIOS:
+        for name, ball, club, launch, side, cls in SCENARIOS:
             g = src.analyze(synth_capture(ball, club, launch, side, seed=seed))
             if ball is None:
                 ok = g is None
             elif g is None:
                 ok = False                       # missed a real shot
             else:
-                ok = abs(g["ball_speed_mph"] - ball) < max(0.04 * ball, 1.5)
-                if ball >= 30:
+                ok = g["launch_angle_deg"] >= 0         # physical invariant
+                if cls == "floor":
+                    ok &= abs(g["ball_speed_mph"] - ball) < max(0.25 * ball, 2.0)
+                    ok &= g["geometry_confidence"] <= 0.6
+                else:
+                    ok &= abs(g["ball_speed_mph"] - ball) < max(0.04 * ball, 1.5)
+                if cls == "full":
                     ok &= abs(g["launch_angle_deg"] - launch) < 2.5
                     ok &= abs(g["side_angle_deg"] - side) < 2.5
             if not ok:
