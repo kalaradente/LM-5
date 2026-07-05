@@ -53,12 +53,21 @@ patch. On a dev machine, symlink it for testing:
 - **This machine's environment**: macOS, Python 3.14, **Homebrew is broken**
   (Node was installed via `nvm` as a workaround; `poppler`/`pdftoppm` is
   unavailable — read PDFs via `pypdf` text extraction, not the Read tool's
-  page rendering).
+  page rendering; for figures/mechanical drawings that are images rather
+  than text, pull the embedded image objects directly via pypdf's
+  `page.images` — this does NOT need poppler, unlike full-page rendering).
+- **Primary datasheets**: all live at `~/Desktop/datasheets/` (external,
+  git-ignored — vendor PDFs, not committed). See
+  `openflight_iwr6843/docs/datasheets-manifest.md` for the full catalog and
+  what's been confirmed from each. Check there before re-fetching anything
+  from the web — web fetches of these exact PDFs have repeatedly timed out.
 - **Verification loop after any change** (all pass today):
   ```bash
   python3 -m py_compile openflight_iwr6843/*.py *.py
   python3 -m openflight_iwr6843.spin_decoder --selftest      # expect ~3000rpm PASS
   python3 spin_capture_simulator.py --speed 165 --spin 2600  # synthetic spin path
+  python3 geometry_capture_simulator.py           # geometry path: club/ball classifier
+  python3 geometry_capture_simulator.py --sweep   # ...across 6 noise seeds
   bash -n scripts/setup_wizard.sh
   # with openflight_upstream symlinked:
   python3 shot_simulator.py --ball-speed 165 --spin 2600 --launch-angle 13 --side-spin 900
@@ -84,9 +93,15 @@ patch. On a dev machine, symlink it for testing:
 | `run_iwr6843.py` | Runs real hardware against the real OpenFlight server/UI. `--gspro-host` optional. |
 | `shot_simulator.py` | Type ball speed/spin/launch → RK4 flight sim. `--live` renders in real UI. |
 | `spin_capture_simulator.py` | Synthesize raw K-MC1 I/Q → test `spin_decoder.decode()`. No hardware. |
+| `geometry_capture_simulator.py` | Synthesize IWR6843 captures (swing-arc club + ballistic ball) → test `analyze()`'s track-based club/ball classifier (F-7). No hardware. |
 | `scripts/setup_wizard.sh` | One-command Pi bring-up (clone+patch upstream, deps, Node/UI, HiFiBerry overlay, dialout, port auto-detect+udev, gain, writes `hardware.env`). |
 | `patches/simulate_custom_shot.patch` | The one additive change to upstream `server.py` that `--live` needs; wizard auto-applies. |
 | `openflight_iwr6843/docs/firmware-flashing.md` | Uniflash flashing guide + real SOP switch table + flash-vs-config explainer. |
+| `openflight_iwr6843/docs/kmc1-harness.md` | K-MC1 buy-and-solder reference: order -00D (5V), Pin 1 /Enable → GND (internal pullup trap!), pin table, supply filtering, clip-risk budget. |
+| `openflight_iwr6843/docs/mounting.md` | Physical sensor mounting decision + rationale (side-by-side, one rigid plate, ~2m/height≈ball-height/10° tilt) and confirmed K-MC1/IWR6843ISK physical specs. |
+| `openflight_iwr6843/docs/mounting-plate.svg` | Top-view + side-view diagram of the mounting plate. |
+| `openflight_iwr6843/docs/datasheets-manifest.md` | Catalog of all primary datasheets at `~/Desktop/datasheets/` (external, git-ignored) and what's been confirmed from each. |
+| `openflight_iwr6843/docs/audit-log.md` | **Running audit log** — five-stage (physical/trigger/processing/output/upstream) top-down audits per channel; findings F-1…F-7 (code audits) and D-1…D-9 (datasheet audit) with statuses. Read this before assuming anything about open issues. As of 2026-07-05: F-1…F-7, D-1, D-2 all FIXED/RESOLVED; D-3 downgraded (CW vs FMCW + link budget) with the `audio_clipped` software guard landed. Still open: D-5 (outdoor 15m gate physically capped at 6.09m — needs an outdoor profile variant), D-6 (DAC2 ADC Pro datasheet missing), D-8 (K-MC1 rotation at build), and placing the actual -00D order. Known measurement limits (chip launch ~10° low, driver launch ±2° scatter) documented in the log. |
 
 ---
 
@@ -114,7 +129,18 @@ patch. On a dev machine, symlink it for testing:
 4. **Impedance verified**: K-MC1 100Ω out vs DAC2 20kΩ/pin in = ~200:1,
    negligible loss. No matching needed.
 
-5. **Working method the user values**: read **primary datasheets, not web
+5. **Physical mounting decided (2026-07-05)**: both sensors on one rigid
+   plate, side by side, centered on the target line, ~2m behind the ball,
+   mount height ≈ ball height, 10° tilt. Full rationale (why side-by-side
+   beats stacking, why the height is inferred from `aoaFovCfg`'s asymmetric
+   elevation gate) in `openflight_iwr6843/docs/mounting.md`. K-MC1's real
+   beamwidth (12°H/25°V, datasheet-confirmed) is narrower than the
+   IWR6843's, which is why boresight alignment matters most for that
+   channel. SDK version also pinned to **3.6**, confirmed from a Demo
+   Visualizer printout (matches the User Guide already used for the
+   golf.cfg CLI-arg audit).
+
+6. **Working method the user values**: read **primary datasheets, not web
    search summaries** (a search summary gave a wrong 47dB K-MC1 gain figure
    — real value is 32dB — caught only by reading the actual datasheet).
    Verify fixes with **synthetic tests** before trusting them. Flag what's
@@ -130,10 +156,13 @@ patch. On a dev machine, symlink it for testing:
   code off by −9.98 to −10.00° across 11/20/35°; fixed code within 0.5°).
   Fixed in `BallTracker` (gravity decomposed into tilted frame) AND
   `analyze()` (velocity rotated to world frame before atan2).
-- **ttyUSB → ttyACM** (650ceb1): IWR6843's XDS110 probe is CDC-ACM class,
-  enumerates as `/dev/ttyACM*`, not `ttyUSB*`. Fixed across docs/help text.
-  No driver needed on Pi (`cdc_acm` built in); Windows needs TI's XDS110
-  driver (Uniflash/CCS).
+- **ttyUSB → ttyACM (650ceb1) — REVERSED 2026-07-05 (audit finding D-1)**:
+  that commit was a fix in the wrong direction. The XDS110 lives on the
+  MMWAVEICBOOST carrier only; the standalone ISK (our topology) uses a
+  SiLabs **CP2105** bridge → `/dev/ttyUSB*` via `cp210x` on the Pi, SiLabs
+  CP210x VCP driver on Windows. All prose corrected back; the wizard's
+  detection machinery was device-class-agnostic all along. See
+  `docs/audit-log.md` D-1.
 - **Side-info dtype** (acf1fc3): SNR/noise are `uint16` per TI spec, was
   `int16`. Harmless in practice, fixed for correctness.
 - **K-MC1 wavelength off by 24.0 vs 24.125 GHz**: `WAVELENGTH` was `0.0125` m

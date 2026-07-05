@@ -1,0 +1,37 @@
+# Datasheet manifest
+
+Primary-source documents live **outside this repo**, at
+`~/Desktop/datasheets/` on the dev machine (not committed — vendor PDFs,
+avoid redistributing copyrighted TI/RFbeam material in a public AGPL repo).
+This file is the durable pointer to what's there and what each doc has
+already been used to confirm, so a fresh session doesn't have to re-fetch
+them (web fetches of these PDFs time out repeatedly — see HANDOFF.md
+environment notes) or re-derive facts already pulled from them.
+
+**Reading method on this machine**: no poppler/pdftoppm (Homebrew is
+broken) — extract text via `pypdf`, and for figures/mechanical drawings that
+are images rather than text, pull the embedded image objects directly via
+`page.images` (this does NOT require poppler/rasterization, unlike full-page
+rendering) and view with the Read tool.
+
+| File | Identity | Used for / confirmed |
+|---|---|---|
+| `swru546e.pdf` | TI "60GHz mmWave Sensor EVMs" User's Guide, SWRU546E, Oct 2018, revised May 2022 | Section 3.6 (xWR6843ISK antenna): RX1–RX4 λ/2-spaced row + TX1/TX2(offset)/TX3 MIMO array (Figures 3-8/3-9) — confirms how azimuth/elevation AoA is physically derived. Azimuth ±60° / elevation antenna figures (3-10 to 3-19) already cited in `golf.cfg`'s FoV comments. Audit #2: §3.8 modular mode = **CP2105 USB-UART bridge** (→ `ttyUSB*`, finding D-1); §3.5.1 S1 switch/SOP map confirms `firmware-flashing.md`'s table (D-7); XDS110 exists only on the MMWAVEICBOOST carrier (§2.2.2). |
+| `iwr6843.pdf` | TI IWR6843/IWR6443 datasheet — the bare chip, not the ISK antenna board | Package outline only (FCBGA, 10.5×10.5mm, ABL0161B) — **not** useful for antenna-board mechanical dimensions; that's the ISK board (swru546e), which itself has no dimensioned mechanical drawing in the text (see mounting.md). |
+| `K_MC1_Datasheet-3446665.pdf` | RFbeam K-MC1 datasheet, **Rev J, 11/2022** (the plain part, not the LP variant) | fTX 24.050/24.150/24.250 GHz (min/typ/max), nominal 24.125 GHz → `WAVELENGTH` fix. `GIF_AC`=32dB / `GIF_DC`=0dB (IF amp gain). Body outline 65×65×6mm, 50g, M2.5 mounting screws, AMP X-338069-8 connector. Antenna beamwidth 12°(H)/25°(V) −3dB, `GAnt`=18.5dBi, `GLNA`=19dB. See `mounting.md`. Audit #2: ordering variants -00C=3.3V / -00D=5V + RSW Pin-1 wiring requirement (D-2); AC outputs can clip in-module (D-3); the "47dB" figure is IN this datasheet's product blurb (internal I/Q preamps) while the spec table's GIF_AC=32dB is the output-path truth (D-4); Icc 90–100mA; AC band 40Hz–15kHz, Uos_AC=Vcc/2±0.5V reconfirmed. |
+| `Datasheet DAC2 Pro – HiFiBerry.pdf` | **HiFiBerry DAC2 Pro — the WRONG product for us** (playback-only, no ADC; overlay `hifiberry-dacplus-pro`) | Identified in audit #2 (D-6): our board is the DAC2 **ADC** Pro (overlay `hifiberry-dacplusadcpro`, PCM1863 capture). The capture-side figures in `gain.py` (−12…+32dB PGA, 20kΩ) came from a previous session's PCM1863 reading and are NOT re-verifiable from this file. **Get the DAC2 ADC Pro sheet and/or TI PCM1863 datasheet.** |
+| `hifiberry-dac-plus-adc-1.2.step` | Mechanical CAD (STEP) model, DAC+/ADC Pro board | Not yet used. The Pi5-cooler-vs-HAT-stacking clearance question this would have resolved is now moot — solved by case choice instead (see TODO.md). Still useful later for precise plate/enclosure fit if that's ever needed. |
+| `RP-008348-DS-6-raspberry-pi-5-product-brief.pdf` | Raspberry Pi 5 product brief | Audit #2 (D-9): 5V/5A USB-C PD supply, 2×USB3 + 2×USB2, 40-pin header — K-MC1's 90–100mA off the 5V header is comfortably in budget (with the 5V -00D variant, see D-2). |
+| `Using UniFlash with mmWave.pdf` | TI UniFlash flashing walkthrough | Audit #2 (D-9): confirms flashing uses the CFG/"Enhanced" COM port (CP2105 iface 0 — the same port the wizard calls CLI), two virtual COM ports, no JTAG needed standalone. Port-naming table cross-confirms D-1. |
+| `Hardware Setup for Flashing in MMWAVEICBOOST Mode.pdf` | TI MMWAVEICBOOST flashing hardware setup (jumpers/switches) | Documents the carrier-board flashing path we do NOT take (our flashing is standalone-ISK over USB). Kept as the alternative-path reference; this is the only context where XDS110/`ttyACM*` would apply. |
+| `DEFAULT SETTINGS FOR 6843 FLASH.pdf` | Screenshot/printout of the TI mmWave Demo Visualizer, showing the target flash configuration | **Confirms SDK version 3.6** and antenna config `4Rx,2Tx(15°)` — matches `channelCfg 15 5 0` exactly. This pins down the SDK version the golf.cfg audit (see TODO.md) was checked against: the mmWave SDK User Guide 3.6 LTS is the *correct* version, not a guess. The specific parameter values shown (range res 0.044m, max range 9.02m, 10fps) are the Visualizer's generic "Best Range Resolution" preset — NOT our tuned `golf.cfg` profile — so they're a version/antenna-config confirmation, not a values source. |
+
+## One incidental finding worth flagging
+
+The K-MC1 (plain) datasheet's `GLNA` = 19 dB is a **different number** from
+the K-MC1_LP variant's FCC filing, which showed `GLNA` = 10 dB. Two
+different real numbers for two different real parts — neither is "wrong,"
+they're just not interchangeable. This is the same class of mistake flagged
+in the `[[primary-datasheet-over-secondary]]` memory note (the 47dB/32dB
+IF-gain confusion): a number from a variant's datasheet is not a stand-in
+for our part's own spec table, even when the variant looks similar.

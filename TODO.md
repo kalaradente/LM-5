@@ -36,19 +36,127 @@ Running list of open items. Newest relevant item first per section.
 - [ ] Confirm IWR6843ISK board revision is C or later (needed for direct
       DCA1000 connection later, skipping the MMWAVEICBOOST carrier).
 
-- [ ] Resolve Pi 5 active-cooler vs. HAT stacking geometry before drilling
-      the base plate (cooler sits under the HAT; may need a tall header,
-      or mount Pi and HAT side-by-side with a short GPIO ribbon instead).
+- [x] Pi 5 active-cooler vs. HAT stacking geometry: **resolved by case
+      choice** (2026-07-05) — found a case that fits the active cooler on
+      top with the Pi and HAT still stacked normally. No tall header or
+      side-by-side GPIO ribbon workaround needed.
 
-- [ ] Re-check mounting distance: plan for ~2m behind the ball (swing
-      clearance + radar near-field), not the earlier 1-1.5m estimate.
+- [x] **Physical sensor mounting decided** (2026-07-05, see
+      `openflight_iwr6843/docs/mounting.md` + `mounting-plate.svg` for the
+      full rationale and diagram): both sensors on **one rigid plate, side
+      by side** (not stacked — a horizontal split puts the unavoidable
+      residual boresight offset in azimuth, the axis with margin (±60°),
+      not elevation, the axis that's tuned (`aoaFovCfg` −20/+40 asymmetric,
+      centered via `MOUNT_TILT_DEG`)); **centered on the target line**
+      (matches azimuth's symmetric FoV); **~2m behind the ball** (swing
+      clearance + near-field, superseding the earlier 1-1.5m estimate);
+      **mount height ≈ ball height** (inferred from the elevation FoV's
+      asymmetry — implies a low, near-ground mount looking up at the rising
+      ball, not an elevated mount looking down); **10° tilt** (already
+      decided). K-MC1's confirmed narrow beam (12°H/25°V, see below) is why
+      alignment + minimal separation matter more than FoV numbers alone
+      suggest. STILL OPEN: exact xWR6843ISK board dimension (not in the EVM
+      guide's text, only an unscaled photo) — measure the real board or
+      find TI's mechanical/fab drawing before machining an exact-fit plate.
+
+- [x] **K-MC1 physical specs confirmed from the primary datasheet** (Rev J,
+      11/2022): body 65×65×6mm, 50g; mounts via M2.5 screws from the back
+      (M2 alt for a holder; never run without screws in "A" — antenna PCB
+      is only glued in for shipping, not structural); connector AMP
+      X-338069-8, 8 pins; antenna beamwidth 12°(H)/25°(V) at −3dB (narrower
+      than the IWR6843's FoV in both axes); `GAnt`=18.5dBi, `GLNA`=19dB.
+      Note `GLNA`=19dB here is a DIFFERENT number from the K-MC1_LP
+      variant's FCC filing (10dB) — same "variant datasheets don't
+      transfer" lesson as the earlier 47dB/32dB IF-gain question.
+
+- [x] **IWR6843ISK antenna array physically confirmed** (TI SWRU546E EVM
+      guide, Figures 3-8/3-9, extracted as images and viewed directly):
+      RX1-4 in a row spaced λ/2 (2.5mm), TX1/TX2(vertically offset)/TX3 —
+      confirms azimuth AoA comes from the horizontal RX+TX1/TX3 spacing and
+      elevation AoA from TX2's vertical offset vs the TX1/TX3 row. Validates
+      that `channelCfg`/`aoaFovCfg`'s design assumptions match the real
+      hardware, not just the datasheet's prose.
+
+- [x] **SDK version pinned**: the "DEFAULT SETTINGS FOR 6843 FLASH" printout
+      (TI mmWave Demo Visualizer) confirms **SDK 3.6** and antenna config
+      `4Rx,2Tx(15°)` — exactly matching `channelCfg 15 5 0`. This confirms
+      the golf.cfg CLI-arg audit (see Process section below) was checked
+      against the *correct* SDK User Guide version, not a guess. See
+      `openflight_iwr6843/docs/datasheets-manifest.md`.
+
+- [ ] All primary datasheets now live at `~/Desktop/datasheets/` (external,
+      git-ignored — see `openflight_iwr6843/docs/datasheets-manifest.md` for
+      the full catalog + what's been extracted from each). Two files in
+      that folder are NOT yet cross-checked against the pipeline:
+      `Datasheet DAC2 Pro – HiFiBerry.pdf` beyond the PGA/impedance figures
+      already in `gain.py`, and the DAC+/ADC Pro mechanical STEP file
+      (relevant to the Pi5-cooler-vs-HAT-stacking item below).
 
 - [ ] Solve K-MC1 power: confirm chosen USB battery pack has a low-current
       "trickle" mode, or switch to powering the module off the Pi's own 5V
       GPIO pin (module only draws ~90mA; many power banks auto-shutoff
       below ~100-150mA and will drop the module mid-session).
 
+## From the 2026-07-05 datasheet audit (see openflight_iwr6843/docs/audit-log.md)
+
+- [x] **D-1 (HIGH): fix the serial-port story across all docs/help text.**
+      DONE 2026-07-05 — all five files swept (see audit-log.md D-1/FIXED).
+      Standalone ISK (our topology) = SiLabs **CP2105** bridge → `ttyUSB*`
+      via `cp210x`, Windows needs the SiLabs VCP driver. XDS110/`ttyACM*`/
+      `cdc_acm` applies ONLY on an MMWAVEICBOOST carrier (we don't use one).
+      Commit 650ceb1 fixed this backwards. Prose-only fix in:
+      `run_iwr6843.py` (docstring/help/error), `scripts/setup_wizard.sh`
+      (comments/error hints), `openflight_iwr6843/README.md`,
+      `docs/firmware-flashing.md` (Windows driver section), `HANDOFF.md`
+      (bug list). The wizard's auto-detect/udev machinery already works for
+      both device classes — no logic change needed.
+- [x] **D-2 resolved (2026-07-05)** — see `openflight_iwr6843/docs/
+      kmc1-harness.md` for the full buy-and-solder reference. Order
+      **K-MC1-RFB-00D** (5V): matches the Pi-5V-header power plan AND buys
+      +3.6dB in-module clipping headroom (couples with D-3). Harness: Pin 1
+      (/Enable) **hardwired to GND** — it has an internal 10k PULLUP, so a
+      floating pin = radar silently OFF; ferrite+10uF/100nF at the module;
+      I_AC->left / Q_AC->right; VCO open (<=0.4% speed-scale error,
+      bench-checkable). STILL TO DO: actually place the order.
+- [~] **D-3 downgraded + software guard landed (2026-07-05)**: the
+      datasheet attributes clipping to FMCW/static-clutter use; we run CW
+      and the AC path's 40Hz corner removes static returns. Link budget
+      (EIRP +16.5dBm, ball σ≈−25dBsm @2m): ~±100mV at the output vs ±2V
+      rails = **~24dB headroom — the ball alone cannot clip**. Residual
+      risk = club-face specular glints (~ms around impact). `AudioRing`
+      now detects clipping per shot (consecutive-pinned-sample plateau
+      test + ADC-full-scale test, BEFORE peak normalization), tags
+      `audio_clipped`, and halves measured spin confidence on clipped
+      captures. REMAINS for rung 4: eyeball real captures, tune the
+      plateau threshold, and only then judge the DC-outputs fallback.
+- [ ] **D-5: outdoor range gate is aspirational under the current chirp** —
+      profile R_max = 6.09m (ADC-rate-bound), so SessionConfig's outdoor
+      15m gate buys no real range and the "more outdoor fixes" rationale is
+      capped at ~27 frames for a driver. Add an outdoor profile variant
+      (slower slope and/or 12.5 Msps) if outdoor geometry beyond ~6m ever
+      matters; the wider outdoor window still helps the spin channel.
+- [ ] **D-6: get the real DAC2 ADC Pro datasheet** (and/or TI PCM1863) into
+      `~/Desktop/datasheets/` — the HiFiBerry sheet currently there is the
+      playback-only DAC2 Pro (wrong product, no ADC).
+- [ ] **D-8: at build, confirm K-MC1 rotation** so the 25° beam axis is
+      vertical (labels in the spec table assume one specific module
+      orientation — check the mechanical drawing, then pin the correct
+      edge-up into docs/mounting.md).
+
 ## Software
+
+- [x] **F-7 fixed (2026-07-05): track-based club/ball classification** —
+      see audit-log.md F-7 for the full design. Ball = best ballistic
+      suffix across spatially-clustered tracks; everything at-or-behind
+      the ball's first-detection range is excluded from the ball fit, and
+      club speed = fastest pre-birth row (max clubhead radial occurs
+      precisely at ball birth). Verified by the new
+      `geometry_capture_simulator.py` (swing-arc club model + FoV gate +
+      folded Doppler + USB-chunked timestamps): 4 scenarios x 6 noise
+      seeds, 0 failures; no phantom practice-swing shots. Known limits
+      documented in the audit log (chip launch ~10 deg low, driver launch
+      +/-2 deg scatter). Real captures replayed through analyze() re-test
+      this for free once hardware exists.
 
 - [x] Kalman-smoothed carrier tracker + 3D ballistic tracker (`kalman.py`)
 - [x] Harmonic-sum ("tap-along") spin bank replacing naive peak-pick
