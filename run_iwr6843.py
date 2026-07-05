@@ -16,27 +16,31 @@ starting the same Flask-SocketIO app.
 REMINDER: --geom-port/--data-port/--control below have no safe defaults --
 they depend on your actual USB enumeration order and ALSA card, which you
 have not confirmed yet. Find them for real before trusting any default:
-    ls /dev/ttyACM*                                  # geometry ports -- the
-                                                       # IWR6843's onboard
-                                                       # XDS110 debug probe is
-                                                       # USB CDC-ACM class, so
-                                                       # it enumerates as
-                                                       # ttyACM* on Linux, not
-                                                       # ttyUSB*. No separate
-                                                       # driver needed on the
-                                                       # Pi (cdc_acm is
-                                                       # built into Raspberry
-                                                       # Pi OS) -- that's a
-                                                       # Windows-only step
-                                                       # (TI's XDS110 driver
-                                                       # via Uniflash/CCS).
+    ls /dev/ttyUSB*                                  # geometry ports -- the
+                                                       # standalone ISK's USB
+                                                       # runs through a SiLabs
+                                                       # CP2105 dual-UART
+                                                       # bridge (SWRU546E
+                                                       # 3.8), so it
+                                                       # enumerates as
+                                                       # ttyUSB* on Linux via
+                                                       # cp210x (built into
+                                                       # Raspberry Pi OS).
+                                                       # Windows needs the
+                                                       # SiLabs CP210x VCP
+                                                       # driver. (ttyACM*/
+                                                       # XDS110 applies ONLY
+                                                       # if mounted on an
+                                                       # MMWAVEICBOOST
+                                                       # carrier -- we don't
+                                                       # use one.)
     aplay -l / arecord -l                             # HiFiBerry card index
     python -m openflight_iwr6843.gain list --card N    # mixer control name
 scripts/setup_wizard.sh automates this discovery and writes the confirmed
 values to hardware.env, which this script reads if present.
 
 Usage:
-    python3 run_iwr6843.py --geom-port /dev/ttyACM1 --data-port /dev/ttyACM0 \\
+    python3 run_iwr6843.py --geom-port /dev/ttyUSB1 --cli-port /dev/ttyUSB0 \\
         --ballistics
 """
 
@@ -215,9 +219,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                       formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--geom-port", default=env.get("GEOM_PORT"),
-                         help="IWR6843 data port, e.g. /dev/ttyACM1 (UNVERIFIED default)")
+                         help="IWR6843 data port, e.g. /dev/ttyUSB1 (UNVERIFIED default)")
     parser.add_argument("--cli-port", default=env.get("CLI_PORT"),
-                         help="IWR6843 CLI/config port, e.g. /dev/ttyACM0")
+                         help="IWR6843 CLI/config port, e.g. /dev/ttyUSB0")
     parser.add_argument("--cfg", default=str(REPO_ROOT / "openflight_iwr6843" / "golf.cfg"))
     parser.add_argument("--audio-device", default=env.get("AUDIO_DEVICE"),
                          help="sounddevice device name/index for the HiFiBerry capture")
@@ -243,7 +247,7 @@ def main() -> None:
     if not args.cli_port or not args.geom_port:
         sys.exit(
             "error: --cli-port/--geom-port are required (no safe default).\n"
-            "Run `ls /dev/ttyACM*` on the Pi to find them, or run "
+            "Run `ls /dev/ttyUSB*` on the Pi to find them, or run "
             "scripts/setup_wizard.sh first to discover and save them.\n"
         )
 

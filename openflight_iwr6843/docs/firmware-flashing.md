@@ -45,18 +45,25 @@ against the same version's reference config, and both the TI Demo Visualizer
   `packages/ti/demo/xwr68xx/mmw/` build output)
 - Micro-USB to the board; note the CLI (115200) and data (921600) COM ports
 
-## Windows XDS110 driver
+## Windows COM-port driver (SiLabs CP210x — corrected 2026-07-05, audit D-1)
 
-Windows needs TI's XDS110 driver installed before the board's CLI/data COM
-ports (or Uniflash) will work — this is the Windows-specific step; **the Pi
-needs no driver at all** (the same XDS110 debug probe is USB CDC-ACM class
-on Linux, and `cdc_acm` ships built into Raspberry Pi OS).
+The standalone ISK's USB runs through a **SiLabs CP2105 dual-UART bridge**
+(SWRU546E §3.8 — the "CP2015" in TI's text is a typo; the guide's own
+Figure 4-19 caption says CP2105). So Windows needs the **SiLabs CP210x VCP
+driver** before the board's two COM ports (or Uniflash) will work — this is
+the Windows-specific step; **the Pi needs no driver at all** (`cp210x`
+ships built into Raspberry Pi OS, and the board enumerates as
+`/dev/ttyUSB0`/`ttyUSB1`). The two ports are "Enhanced" (= CFG/User UART,
+115200 — the one Uniflash flashes over) and "Standard" (= data, 921600).
 
-**Not bundled in this repo, on purpose.** TI's driver packages (whether the
-standalone XDS110 driver or the one bundled with Uniflash/Code Composer
-Studio) come under TI's own click-through license, which typically restricts
-redistribution — and the installer can run tens to hundreds of MB, which
-doesn't belong in this git history either way.
+_An earlier revision of this doc said "TI XDS110 driver / ttyACM" — that
+applies only when the antenna board is mounted on an MMWAVEICBOOST carrier
+(which has the XDS110 probe). We flash and run the ISK standalone._
+
+**Not bundled in this repo, on purpose.** Driver packages come under their
+vendors' click-through licenses, which typically restrict redistribution —
+and installers can run tens to hundreds of MB, which doesn't belong in this
+git history either way.
 
 Instead, pin the exact provenance here once you've downloaded it, so you can
 always get back to the *identical* file even if TI reorganizes their site

@@ -159,11 +159,12 @@ fi
 # ---- 5. IWR6843 serial ports (automatic) ---------------------------------
 
 log "Step 5: IWR6843 serial ports"
-# The IWR6843's onboard XDS110 debug probe is USB CDC-ACM class, so it
-# enumerates as /dev/ttyACM* on Linux (not ttyUSB*) -- no driver install
-# needed, cdc_acm is built into Raspberry Pi OS (unlike Windows, which needs
-# TI's XDS110 driver via Uniflash/CCS). ttyUSB* included below just in case
-# a given kernel/board combination differs.
+# The standalone ISK's USB runs through a SiLabs CP2105 dual-UART bridge
+# (SWRU546E section 3.8), so it enumerates as /dev/ttyUSB* on Linux -- no
+# driver install needed, cp210x is built into Raspberry Pi OS. (Windows
+# needs the SiLabs CP210x VCP driver.) ttyACM* is also globbed below ONLY
+# for the case of an MMWAVEICBOOST carrier (whose XDS110 probe is CDC-ACM
+# class) -- not our topology, but harmless to check.
 # (not `mapfile` -- bash 3.2 on macOS doesn't have it; this works on both
 # that and the Pi's modern bash)
 PORTS=()
@@ -172,10 +173,11 @@ while IFS= read -r line; do
 done < <(ls /dev/ttyACM* /dev/ttyUSB* 2>/dev/null || true)
 
 if [ ${#PORTS[@]} -eq 0 ]; then
-    error "No /dev/ttyACM*/ttyUSB* devices found. Plug in the IWR6843ISK and re-run."
-    error "(cdc_acm is built into Raspberry Pi OS -- if lsusb sees the board but no"
-    error "/dev/ttyACM* appears, check dmesg; there's a known regression in some"
-    error "Pi kernel builds where cdc_acm registers but doesn't create device nodes.)"
+    error "No /dev/ttyUSB*/ttyACM* devices found. Plug in the IWR6843ISK and re-run."
+    error "(cp210x is built into Raspberry Pi OS -- if lsusb sees a Silicon Labs"
+    error "CP2105 [10c4:ea70] but no /dev/ttyUSB* appears, check dmesg for the"
+    error "cp210x driver binding; also confirm the ISK's S1.5 switch is OFF so the"
+    error "user UART is routed to the USB connector J5, not the 60-pin header.)"
     CLI_PORT=""
     GEOM_PORT=""
 elif [ ${#PORTS[@]} -ne 2 ]; then
@@ -189,12 +191,13 @@ elif [ ${#PORTS[@]} -ne 2 ]; then
     GEOM_PORT="${PORTS[$geom_idx]}"
 else
     # Exactly 2 ports, nothing else expected on the bus: assume both belong
-    # to the IWR6843's onboard XDS110 debug probe, which exposes two UART
-    # interfaces off one composite USB device. Convention (not a datasheet
-    # guarantee): interface 0 = Application/User UART = our CLI port,
-    # interface 1 = Auxiliary Data Port = our streaming data port. Printed
-    # below so it's checkable against rung 1 (TI Demo Visualizer) rather
-    # than a silent black box.
+    # to the ISK's CP2105 bridge, which exposes two UART interfaces off one
+    # composite USB device ("Enhanced" = interface 0, "Standard" =
+    # interface 1). Per TI's UniFlash doc the Enhanced port is the
+    # CFG/User UART (our CLI port) and the Standard port is the data port
+    # -- matching the interface-number sort below. Printed so it's
+    # checkable against rung 1 (TI Demo Visualizer) rather than a silent
+    # black box.
     declare -A IFACE_NUM
     for p in "${PORTS[@]}"; do
         n=""
@@ -216,7 +219,7 @@ else
     warn "board -- confirm against the TI mmWave Demo Visualizer (rung 1) the"
     warn "first time before trusting it for real captures."
 
-    # Persistent naming: without this, hardware.env's raw /dev/ttyACMn paths
+    # Persistent naming: without this, hardware.env's raw /dev/ttyUSBn paths
     # can silently point at the wrong physical port after a reboot/replug,
     # since USB enumeration order isn't guaranteed.
     if command -v udevadm >/dev/null 2>&1 && [ -n "$BOOT_CONFIG" ]; then
