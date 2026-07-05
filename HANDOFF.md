@@ -89,7 +89,8 @@ patch. On a dev machine, symlink it for testing:
 | `openflight_iwr6843/session.py` | `SessionConfig` presets (indoor/outdoor × ball type). |
 | `openflight_iwr6843/gspro_adapter.py` | GSPro Open Connect client. |
 | `openflight_iwr6843/gain.py` | HiFiBerry capture-gain via pyalsaaudio (Linux only). |
-| `openflight_iwr6843/golf.cfg` | IWR6843 chirp profile (heavily commented re: antenna FoV). |
+| `openflight_iwr6843/golf.cfg` | IWR6843 chirp profile, indoor (heavily commented re: antenna FoV). R_max 6.09 m. |
+| `openflight_iwr6843/golf-outdoor.cfg` | Outdoor chirp profile (D-5): 10 m gate at indoor-grade range res, ~43 driver fixes; auto-selected by run_iwr6843.py for --outdoor. |
 | `run_iwr6843.py` | Runs real hardware against the real OpenFlight server/UI. `--gspro-host` optional. |
 | `shot_simulator.py` | Type ball speed/spin/launch → RK4 flight sim. `--live` renders in real UI. |
 | `spin_capture_simulator.py` | Synthesize raw K-MC1 I/Q → test `spin_decoder.decode()`. No hardware. |
@@ -101,7 +102,7 @@ patch. On a dev machine, symlink it for testing:
 | `openflight_iwr6843/docs/mounting.md` | Physical sensor mounting decision + rationale (side-by-side, one rigid plate, ~2m/height≈ball-height/10° tilt) and confirmed K-MC1/IWR6843ISK physical specs. |
 | `openflight_iwr6843/docs/mounting-plate.svg` | Top-view + side-view diagram of the mounting plate. |
 | `openflight_iwr6843/docs/datasheets-manifest.md` | Catalog of all primary datasheets at `~/Desktop/datasheets/` (external, git-ignored) and what's been confirmed from each. |
-| `openflight_iwr6843/docs/audit-log.md` | **Running audit log** — five-stage (physical/trigger/processing/output/upstream) top-down audits per channel; findings F-1…F-7 (code audits) and D-1…D-9 (datasheet audit) with statuses. Read this before assuming anything about open issues. As of 2026-07-05: F-1…F-7, D-1, D-2 all FIXED/RESOLVED; D-3 downgraded (CW vs FMCW + link budget) with the `audio_clipped` software guard landed. Still open: D-5 (outdoor 15m gate physically capped at 6.09m — needs an outdoor profile variant), D-6 (DAC2 ADC Pro datasheet missing), D-8 (K-MC1 rotation at build), and placing the actual -00D order. Known measurement limits (chip launch ~10° low, driver launch ±2° scatter) documented in the log. |
+| `openflight_iwr6843/docs/audit-log.md` | **Running audit log** — five-stage (physical/trigger/processing/output/upstream) top-down audits per channel; findings F-1…F-7 (code audits) and D-1…D-9 (datasheet audit) with statuses. Read this before assuming anything about open issues. As of 2026-07-05: F-1…F-7, D-1, D-2 all FIXED/RESOLVED; D-3 downgraded (CW vs FMCW + link budget) with the `audio_clipped` software guard landed. Still open: D-8 (K-MC1 rotation at build) and placing the actual -00D order — everything else is closed (D-5 via golf-outdoor.cfg; D-6 via the DAC2 ADC Pro + PCM1863 sheets, which also surfaced the ADC input-mux requirement the wizard now sets). Known measurement limits (chip launch ~10° low, driver launch ±2° scatter) documented in the log. |
 
 ---
 

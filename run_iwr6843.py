@@ -222,7 +222,9 @@ def main() -> None:
                          help="IWR6843 data port, e.g. /dev/ttyUSB1 (UNVERIFIED default)")
     parser.add_argument("--cli-port", default=env.get("CLI_PORT"),
                          help="IWR6843 CLI/config port, e.g. /dev/ttyUSB0")
-    parser.add_argument("--cfg", default=str(REPO_ROOT / "openflight_iwr6843" / "golf.cfg"))
+    parser.add_argument("--cfg", default=None,
+                         help="chirp profile; default picks golf.cfg (indoor) or "
+                              "golf-outdoor.cfg (--outdoor) to match the session")
     parser.add_argument("--audio-device", default=env.get("AUDIO_DEVICE"),
                          help="sounddevice device name/index for the HiFiBerry capture")
     parser.add_argument("--club", default="driver")
@@ -256,6 +258,13 @@ def main() -> None:
 
     session = SessionConfig("outdoor" if args.outdoor else "indoor", args.ball)
     log.info("[session] %s", session.summary())
+    if args.cfg is None:
+        # The outdoor session needs the outdoor chirp profile to actually
+        # reach past 6 m (audit D-5): the session's range-gate rewrite can
+        # only tighten what the chip emits, never extend it.
+        name = "golf-outdoor.cfg" if args.outdoor else "golf.cfg"
+        args.cfg = str(REPO_ROOT / "openflight_iwr6843" / name)
+        log.info("[session] chirp profile: %s", name)
 
     ofserver.ballistics_enabled = args.ballistics
     ofserver.mock_mode = False
