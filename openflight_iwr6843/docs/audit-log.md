@@ -13,6 +13,69 @@ Primary sources live at `~/Desktop/datasheets/` — see
 
 ---
 
+## Audit #5 — 2026-07-05 (real-stimuli audit; supersedes failed #4)
+
+The escalation beyond #3's button-pressing: feed the organism synthesized
+REAL-WORLD STIMULI and verify what comes out the other end. 13 stimulus
+scenarios in three parts, run against fake serial ports, a painted audio
+ring, live TCP sockets, and the actual SocketIO wire.
+
+| ID | Sev | Stimulus | Result |
+|----|-----|----------|--------|
+| S-1 | **HIGH — FIXED** | UART stream goes silent mid-capture (sensor unplug) | `frames()` busy-spun FOREVER on empty reads — `run()` wedged inside its capture loop at 100% CPU, shot lost, nothing logged. So severe it hung even the happy-path harness (stream ending right after a shot). Fixed: idle-read guard (~40 empty reads ≈ 2 s at the 50 ms port timeout, vs a 2–2.5 ms frame cadence) ends the generator with a loud message; `run()` finishes the capture with what it has and returns to its caller (the monitor thread exits cleanly, restartable). Re-pressed: dying stream → clean return in <1 s. |
+| S-2 | ✔ security property | `simulate_custom_shot` emitted at a HARDWARE-mode server | Correctly a NO-OP: the patch guards on `isinstance(monitor, MockLaunchMonitor)`, so a web client cannot inject fake shots into a real session. (The mock path is field-proven by Johnny's own fake-shot sessions.) |
+
+**Part A — geometry channel fed real bytes (6/6).** Synthesized the TI TLV
+wire format (40-byte header, detected-points + side-info TLVs, 32-byte
+padding), serialized a full driver swing, and pushed it through the REAL
+`frames()`/`run()` path as a chunked UART stream (1–4096-byte reads) with
+3 KB of leading garbage, one frame whose header lies about totalPacketLen,
+and one dropped frame. Result: trigger fired, capture archived, analyze
+recovered 165 mph/13° within tolerance, the frame-skip warning printed, the
+corrupt frame resynced, the garbage flood (200 KB, no magic) trimmed the
+buffer and recovered the next frame. `configure()` pressed against fake
+CLI serials for BOTH cfgs: session rewrites verified ON THE WIRE
+(sensorStop first, sensorStart last, outdoor gate/clutter/CFAR lines
+correct). `stop()` puts sensorStop on the wire and closes both ports. A
+mid-stream `SerialException` (simulated unplug) is contained by the
+monitor wrapper.
+
+**Part B — spin channel with a painted ring (4/4).** AudioRing's buffer
+painted with a realistic K-MC1 timeline (club tone ramping in 60 ms
+pre-impact, ball carrier + 2600 rpm spin AM after) and the fuser left to do
+its OWN clock math: measured spin 2620/2600, confidence 1.0,
+radar_speed_agreement 1.0, audio archived, jsonl written. In-module-clipped
+variant: flagged AND demoted to inferred (the D-3 guard chain working
+end-to-end). Dead K-MC1 (noise only): graceful inferred fallback. Ring
+thread-safety: 4 concurrent capture callbacks vs 150 window slices, no
+corruption. Harness lesson recorded: the first B1 run FAILED because the
+synthetic K-MC1 was painted at 102% of ADC full scale — the clip detector
+correctly flagged it; real-stimulus tests must respect the documented gain
+staging (ball ~24 dB below FS), and the "failure" doubled as a live
+demonstration of the guard chain.
+
+**Part C — live upstream transports (3/3).** GSPro client against a real
+local TCP server: payload schema field-exact (Speed/VLA/HLA/TotalSpin/
+SpinAxis), ShotNumber increments, ClubData present only when club speed
+exists, heartbeats arrive, 200 reply parsed. `monitor._on_fused` full
+chain: GSPro wire + Shot construction + UI callback in one pass. And the
+finale: `ofserver.socketio.run()` started for real, a python-socketio
+client connected, `on_shot_detected()` fired from the hardware ingress —
+**the 'shot' event arrived on the wire with our field values**. The last
+unpressed transport in the system is now pressed.
+
+Carried forward: none new open. The audit trail now covers reading (F),
+datasheets (D), execution (E), and stimuli (S).
+
+## Audit #4 — 2026-07-05 (real-stimuli audit) — **FAILED: interrupted**
+
+Aborted mid-recon by a session interruption; no findings, no fixes, no
+buttons pressed. Recon that survived (carried into Audit #5): the upstream
+server emits shots on the `"shot"` SocketIO event (`server.py:2168`),
+`python-socketio` client is available in the venv, and
+`serial.SerialException` subclasses `OSError`. Designated FAILED per
+Johnny; superseded in full by Audit #5.
+
 ## Audit #3 — 2026-07-06 (every-button execution audit)
 
 New emphasis per Johnny: don't re-read the code paths, PRESS them — every

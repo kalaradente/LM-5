@@ -218,10 +218,26 @@ class IWR6843Source:
 
     def frames(self):
         """Generator of Frame objects; also checks frame-number continuity."""
+        idle_reads = 0
         while self._running:
             chunk = self.data.read(4096)
             if chunk:
                 self._buf.extend(chunk)
+                idle_reads = 0
+            else:
+                # Stream-death guard (audit S-1): the port timeout is 50 ms,
+                # so ~40 consecutive empty reads = ~2 s of total silence from
+                # a sensor that should emit a frame every 2-2.5 ms. Without
+                # this, a mid-capture unplug left run() busy-spinning FOREVER
+                # inside its capture loop -- 100% CPU, shot lost, nothing
+                # logged (proved with a synthesized dying UART stream).
+                # Ending the generator lets run() finish the capture with
+                # whatever it has and return to its caller.
+                idle_reads += 1
+                if idle_reads > 40:
+                    print("[iwr6843] data stream silent for ~2 s -- sensor "
+                          "dead/unplugged? ending acquisition")
+                    return
             start = self._buf.find(MAGIC_WORD)
             if start < 0:
                 if len(self._buf) > 1 << 16:
@@ -245,6 +261,7 @@ class IWR6843Source:
             self._last_frame_num = hdr[3]
             frame = self._parse(raw, hdr)
             if frame is not None:
+                idle_reads = 0        # draining buffered frames is progress
                 yield frame
 
     def _parse(self, raw: bytes, hdr) -> Optional[Frame]:
