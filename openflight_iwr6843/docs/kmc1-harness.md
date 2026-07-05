@@ -23,10 +23,29 @@ part numbers, not a jumper.) Two reasons:
 | 1 | **/Enable** | **→ GND, hardwired** | Internal **10kΩ pullup**: left floating the module is silently OFF (7–10 mA RSW sleep, no output). GND = active. A GPIO could control sleep later (boot-floating fails quiet, not on) — v1 is a solder joint, not software. |
 | 2 | VCC | 5V from Pi header, through **ferrite bead + 10 µF ∥ 100 nF at the module** | Datasheet Note 1 wants a low-noise supply; supply rejection is −50 dB. Most Pi rail junk is low-frequency (below the spin carrier band) — the bead+caps cover the rest; mains hum is notched in software. |
 | 3 | GND | Pi GND | Common ground with the HiFiBerry. |
-| 4 | Q_AC | HiFiBerry line-in **right** | High-gain IF output, typical load 1 kΩ — the 20 kΩ line-in loads it negligibly (~0.04 dB). |
-| 5 | I_AC | HiFiBerry line-in **left** | I=left / Q=right is what `shot_fusion.AudioRing` assumes when building I + jQ. Swapping them flips apparent Doppler sign — the spin decoder's `--selftest` note covers catching this. |
+| 4 | Q_AC | HiFiBerry input **right** | High-gain IF output, typical load 1 kΩ — the 20 kΩ input loads it negligibly (~0.04 dB). |
+| 5 | I_AC | HiFiBerry input **left** | I=left / Q=right is what `shot_fusion.AudioRing` assumes when building I + jQ. Swapping them flips apparent Doppler sign — the spin decoder's `--selftest` note covers catching this. |
 | 6 | VCO in | **Leave open** | 5V version has an internal 4.7 kΩ pullup; open = CW operation somewhere within 24.05–24.25 GHz (Note 3). Worst-case ±0.4% speed-scale error vs the 24.125 GHz assumed in `spin_decoder.WAVELENGTH` — bench-checkable against a truth unit; not worth extra hardware. |
 | 7/8 | I_DC / Q_DC | **Unconnected** (documented DC-fallback only) | The low-gain (0 dB) outputs "hardly enter into a saturation state" per the datasheet — this is the escape hatch if rung-4 bench captures show in-module clipping on the AC path. |
+
+## HiFiBerry input side (DAC2 ADC Pro sheet, verified 2026-07-05 — audit D-6 closed)
+
+- **Physical input**: either the onboard 3.5 mm input jack (I→tip/left,
+  Q→ring/right, sleeve→GND — simplest) or the 6-pin **J4 header**
+  (`R− R+ / GND GND / L+ L−`). J4 wired differentially (K-MC1 signal → +,
+  K-MC1 GND → −) buys common-mode rejection over the analog run — the
+  better option if the cable must pass near the IWR6843's digital lines.
+- **ADC input mux MUST match the wiring** (wizard step 6 sets this):
+  single-ended jack → `ADC Left Input = VINL1[SE]`, `ADC Right Input =
+  VINR1[SE]`; J4 differential → the `{VINxP, VINxM}[DIFF]` selects. Wrong
+  mux setting = silent capture that looks exactly like a dead radar.
+- **Mic bias OFF, twice**: the mixer control (`ADC Mic Bias = off`) AND the
+  board's mic-bias **jumpers left open** — bias voltage would inject DC
+  into the K-MC1's output stage.
+- **PGA start at 0 dB, not −12** (refined by the sheet's 2.1 Vrms max
+  input): the K-MC1's own output clips at ~±2.5 V peak, *below* the ADC's
+  0 dB full scale (±3.0 V peak) — the module always clips first, so
+  negative PGA gain protects nothing and just discards 12 dB of level.
 
 ## Mechanical reminders (from mounting.md / audit D-8)
 

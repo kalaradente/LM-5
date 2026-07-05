@@ -266,11 +266,25 @@ else
 fi
 read -r -p "HiFiBerry card index (blank to skip): " CARD_INDEX
 if [ -n "$CARD_INDEX" ]; then
+    # Input routing FIRST (DAC2 ADC Pro datasheet, mixer-controls table):
+    # the ADC input mux must be pointed at the single-ended onboard input
+    # (VINL1[SE]/VINR1[SE]) for our unbalanced K-MC1 wiring -- if it's left
+    # on the balanced {VINxP,VINxM}[DIFF] pair, capture reads nothing and
+    # it looks exactly like a dead radar. Mic bias must stay OFF: it would
+    # inject DC into the K-MC1's outputs (also keep the board's mic-bias
+    # jumpers open -- that half is hardware, see docs/kmc1-harness.md).
+    log "Routing ADC inputs to the single-ended onboard input (datasheet: VINL1/VINR1[SE])..."
+    amixer -c "$CARD_INDEX" sset "ADC Mic Bias" "Mic Bias off" >/dev/null 2>&1 || \
+        warn "Couldn't set 'ADC Mic Bias' -- check control names with: amixer -c $CARD_INDEX controls"
+    amixer -c "$CARD_INDEX" sset "ADC Left Input" "VINL1[SE]" >/dev/null 2>&1 || \
+        warn "Couldn't set 'ADC Left Input' -- capture may read the wrong input pins."
+    amixer -c "$CARD_INDEX" sset "ADC Right Input" "VINR1[SE]" >/dev/null 2>&1 || \
+        warn "Couldn't set 'ADC Right Input' -- capture may read the wrong input pins."
     log "Mixer controls on card $CARD_INDEX:"
     python3 -m openflight_iwr6843.gain list --card "$CARD_INDEX" 2>&1 || \
         warn "gain.py couldn't list controls (pyalsaaudio installed? on Linux?)."
-    read -r -p "Capture gain control name (e.g. 'ADC Capture Volume'): " GAIN_CONTROL
-    read -r -p "Initial gain in dB, -12 to +32 (suggest -12 for first bench test): " GAIN_DB
+    read -r -p "Capture gain control name (datasheet examples use 'ADC'): " GAIN_CONTROL
+    read -r -p "Initial gain in dB, -12 to +32 (suggest 0: the K-MC1 clips internally before the ADC does at 0dB, so negative gain buys nothing): " GAIN_DB
     if [ -n "$GAIN_CONTROL" ] && [ -n "$GAIN_DB" ]; then
         python3 -m openflight_iwr6843.gain set "$GAIN_DB" \
             --card "$CARD_INDEX" --control "$GAIN_CONTROL" 2>&1 || \

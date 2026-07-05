@@ -129,15 +129,27 @@ Running list of open items. Newest relevant item first per section.
       `audio_clipped`, and halves measured spin confidence on clipped
       captures. REMAINS for rung 4: eyeball real captures, tune the
       plateau threshold, and only then judge the DC-outputs fallback.
-- [ ] **D-5: outdoor range gate is aspirational under the current chirp** —
-      profile R_max = 6.09m (ADC-rate-bound), so SessionConfig's outdoor
-      15m gate buys no real range and the "more outdoor fixes" rationale is
-      capped at ~27 frames for a driver. Add an outdoor profile variant
-      (slower slope and/or 12.5 Msps) if outdoor geometry beyond ~6m ever
-      matters; the wider outdoor window still helps the spin channel.
-- [ ] **D-6: get the real DAC2 ADC Pro datasheet** (and/or TI PCM1863) into
-      `~/Desktop/datasheets/` — the HiFiBerry sheet currently there is the
-      playback-only DAC2 Pro (wrong product, no ADC).
+- [x] **D-5 resolved (2026-07-05): golf-outdoor.cfg** — 10 m outdoor
+      profile at indoor-grade range resolution (140 MHz/us slope + 10 Msps
+      -> R_max 10.71 m, gate 10.0 m, res 4.78 cm, beat 9.34 MHz inside the
+      10 MHz IF cap, sweep 3.78 GHz inside the band). ~43 driver fixes vs
+      ~27 indoors (+60% observation -> tighter launch angles); 400 Hz
+      frames at 38% duty. v_max_ext drops to ±41.6 m/s — more Doppler
+      folding, by design (positions carry speed; confidence folds; one
+      corner: ~186 mph balls fold to ~0 and the CLUB triggers the capture
+      instead). Session outdoor gate aligned 15→10 m; run_iwr6843.py
+      auto-selects the cfg per session unless --cfg overrides; frame
+      period/v_max derive from the cfg automatically. UNVERIFIED on
+      hardware like everything else — rung 3 diffs both cfgs against the
+      flashed SDK.
+- [x] **D-6 closed (2026-07-05)** — DAC2 ADC Pro datasheet now in
+      `~/Desktop/datasheets/`. gain.py's figures verified (−12…+32dB, 96kHz,
+      overlay). Two NEW bring-up requirements it surfaced, both handled:
+      ADC input mux must be `VINL1[SE]`/`VINR1[SE]` for our unbalanced
+      wiring (wizard step 6 now sets it + mic bias off — wrong mux = silent
+      capture that looks like a dead radar), and PGA should start at 0dB
+      not −12dB (module clips internally below ADC full scale; negative
+      gain protects nothing). See kmc1-harness.md + datasheets-manifest.md.
 - [ ] **D-8: at build, confirm K-MC1 rotation** so the 25° beam axis is
       vertical (labels in the spec table assume one specific module
       orientation — check the mechanical drawing, then pin the correct
