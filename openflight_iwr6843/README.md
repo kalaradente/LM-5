@@ -53,7 +53,7 @@ from openflight_iwr6843.shot_fusion import ShotFuser, AudioRing
 
 audio = AudioRing(); audio.start()
 fuser = ShotFuser(publish=my_openflight_publish, audio=audio)
-src = IWR6843Source("/dev/ttyACM0", "/dev/ttyACM1", "golf.cfg",
+src = IWR6843Source("/dev/ttyUSB0", "/dev/ttyUSB1", "golf.cfg",
                     on_geometry=fuser.on_geometry)
 src.run()
 ```
@@ -63,12 +63,21 @@ shot dataclass in your OpenFlight checkout.
 
 ## Validation
 
-Per session, capture three artifacts per swing: the K-MC1 stereo wav, the
-raw TLV byte log (`cat /dev/ttyACM1 > shots.bin`), and the truth unit's
-export. Then:
+The pipeline logs everything it needs locally, per shot, on its own:
+
+- `captures/radar_<id>.npz` — every triggered radar capture (hits AND
+  misses), replayable through `analyze()`
+- `captures/audio_<id>.npy` — the matching K-MC1 I/Q slice, replayable
+  through `decode()`
+- `captures/shots.jsonl` — one JSON line per fused shot: ball/club speeds,
+  angles, spin + provenance, and the diagnostics upstream's Shot has no
+  fields for (`geometry_confidence`, `radar_speed_agreement`,
+  `audio_clipped`, session tags)
+
+Against a truth unit's export, score it directly:
 
 ```
-python -m openflight_iwr6843.validate our_shots.csv truth.csv
+python -m openflight_iwr6843.validate captures/shots.jsonl truth.csv
 ```
 
 The line that matters: `spin_rpm [measured]` RMSE must beat

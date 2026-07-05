@@ -48,6 +48,7 @@ class AudioRing:
         self.lock = threading.Lock()
         self.stream = None
         self.device = device
+        self.last_clip: dict = {}     # clip diagnostics of the last window()
 
     def start(self):
         if sd is None:
@@ -75,10 +76,43 @@ class AudioRing:
             age = self.t_last - t_center
             n_back = int((age + pre) * self.fs)
             n_len = int((pre + post) * self.fs)
+            # Staleness guard (audit F-5): if the request reaches further
+            # back than the ring holds, the modulo math would silently wrap
+            # and return unrelated newer samples as if they were the shot.
+            # Clamp to the oldest real history and say so -- a shifted
+            # window degrades gracefully; a wrapped one lies.
+            if n_back > self.n:
+                print(f"[audio] window request {n_back / self.fs:.2f}s back "
+                      f"exceeds ring depth {self.n / self.fs:.2f}s -- clamped "
+                      f"(late trigger?)")
+                n_back = self.n
+            n_len = min(n_len, self.n)
             start = (self.write - n_back) % self.n
             idx = (start + np.arange(n_len)) % self.n
             seg = self.buf[idx].astype(np.float64)
-        peak = np.max(np.abs(seg)) or 1.0
+        # Clip detection BEFORE peak-normalization destroys the level
+        # evidence (audit D-3). Two mechanisms, two tests:
+        #   - ADC clipping: peak at the converter's full scale (~1.0).
+        #   - IN-MODULE clipping (K-MC1's own 32dB IF amp -- the HiFiBerry
+        #     PGA can't prevent or undo it): flat-topping at some arbitrary
+        #     ADC level. Signature: CONSECUTIVE samples pinned at the
+        #     window's own peak. Consecutive matters: a kHz carrier at
+        #     96 kHz has only ~6-12 samples/cycle, so single crest samples
+        #     sit at the observed peak on a perfectly clean tone (a
+        #     fraction-near-peak test false-alarms at ~17%); only a real
+        #     plateau produces runs of them. Threshold is a bench-tunable
+        #     heuristic (rung 4), not gospel.
+        # A clipped carrier smears harmonics across the spin band, so
+        # confident-looking spin from a clipped capture is fake evidence
+        # -- ShotFuser reads this and halves the measured confidence.
+        peak = float(np.max(np.abs(seg))) or 1.0
+        pinned = np.abs(seg) >= 0.995 * peak
+        runs = float(np.mean(pinned[1:] & pinned[:-1]))
+        self.last_clip = {
+            "adc_full_scale": peak >= 0.98,
+            "plateau_frac": round(runs, 4),
+            "clipped": peak >= 0.98 or runs > 0.02,
+        }
         seg /= peak
         return seg[:, 0] + 1j * seg[:, 1]
 
@@ -116,6 +150,27 @@ class ShotFuser:
                                   self.audio_post)
             self._archive_audio(z, geom.get("capture_id"))
             result = decode(z)
+            # Clip handling (audit D-3): a clipped capture smears harmonics
+            # into the spin band -- its "confidence" is fake evidence.
+            # Flag every shot and halve measured confidence when clipped,
+            # so borderline reads fall through to the inferred fallback
+            # instead of masquerading as clean measurements.
+            clip = dict(self.audio.last_clip)
+            shot["audio_clipped"] = clip.get("clipped", False)
+            if shot["audio_clipped"] and result.get("ok"):
+                result["confidence"] = result.get("confidence", 0) * 0.5
+            # Cross-sensor diagnostic (audit F-6): the spin decoder's carrier
+            # frequency implies a radial speed; the IWR6843's position track
+            # implies ball speed. Record their agreement on every shot --
+            # free evidence for whether both channels saw the same ball.
+            # Diagnostic only (no gating) until real data says where the
+            # cosine/geometry losses actually put this ratio.
+            radial = result.get("radial_speed_mps")
+            if radial and shot.get("ball_speed_mph"):
+                ball_mps = shot["ball_speed_mph"] * 0.44704
+                shot["spin_radial_speed_mps"] = radial
+                shot["radar_speed_agreement"] = round(
+                    min(radial, ball_mps) / max(radial, ball_mps), 2)
             if result.get("ok") and \
                     result.get("confidence", 0) >= self.spin_conf_floor:
                 shot.update(spin_rpm=round(result["spin_rpm"]),
@@ -133,7 +188,29 @@ class ShotFuser:
             if ax is not None else None
         # Stamp environment/ball_type onto every record for validation grouping.
         shot.update(self.session.tags())
+        self._log_shot(shot)
         self.publish(shot)
+
+    def _log_shot(self, shot: dict, directory: str = "captures"):
+        """Every fused shot -> one JSON line in captures/shots.jsonl,
+        independent of any upstream logger. The raw archives (radar .npz +
+        audio .npy, same capture_id) hold the INPUTS; this holds the
+        computed OUTPUTS plus the diagnostics upstream's Shot dataclass has
+        no fields for (radar_speed_agreement, audio_clipped, session tags,
+        geometry_confidence...). Also the missing producer for
+        validate.py's shots file. Best-effort: logging must never take
+        down shot processing."""
+        try:
+            import json
+            import os
+            os.makedirs(directory, exist_ok=True)
+            rec = dict(shot)
+            rec["logged_at"] = time.time()       # wall clock; t_impact is
+                                                 # host-monotonic, not epoch
+            with open(os.path.join(directory, "shots.jsonl"), "a") as f:
+                f.write(json.dumps(rec, default=float) + "\n")
+        except (OSError, TypeError, ValueError):
+            pass
 
     def _archive_audio(self, z, capture_id, directory="captures"):
         """Save the I/Q slice next to its radar capture (same capture_id),

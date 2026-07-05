@@ -2,10 +2,14 @@
 validate.py — score pipeline output against launch-monitor truth data.
 
 Usage:
+  python -m openflight_iwr6843.validate captures/shots.jsonl truth.csv
   python -m openflight_iwr6843.validate shots.csv truth.csv
 
-shots.csv  — one row per shot from this pipeline (ball_speed_mph,
-             launch_angle_deg, side_angle_deg, spin_rpm, spin_source, ...)
+shots      — one row per shot from this pipeline. The pipeline writes this
+             itself: shot_fusion logs every fused shot to
+             captures/shots.jsonl (ball_speed_mph, launch_angle_deg,
+             side_angle_deg, spin_rpm, spin_source, diagnostics, ...).
+             A hand-made CSV with the same columns also works.
 truth.csv  — export from Eye XO / Trackman with matching shot order and
              columns ball_speed, launch_angle, side_angle, spin (any common
              naming; see ALIASES).
@@ -33,6 +37,12 @@ ALIASES = {
 
 
 def _read(path):
+    if path.endswith(".jsonl"):
+        # The pipeline's own local shot log (shot_fusion._log_shot writes
+        # captures/shots.jsonl) -- one JSON dict per line.
+        import json
+        with open(path) as f:
+            return [json.loads(line) for line in f if line.strip()]
     with open(path, newline="") as f:
         return list(csv.DictReader(f))
 
