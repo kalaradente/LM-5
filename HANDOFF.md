@@ -1,6 +1,6 @@
 # LM-2 — Session Handoff / State of Affairs
 
-_Written 2026-07-04, last updated 2026-07-05 (after audits #1-#5). Read
+_Written 2026-07-04, last updated 2026-07-06 (after audits #1-#6). Read
 this first, then `openflight_iwr6843/docs/audit-log.md` (the running audit
 record — REQUIRED reading before assuming anything about open issues),
 `TODO.md`, and `openflight_iwr6843/README.md`. Auto-memory also carries
@@ -93,12 +93,12 @@ patch. On a dev machine, symlink it for testing:
 | `openflight_iwr6843/session.py` | `SessionConfig` presets (indoor/outdoor × ball type). |
 | `openflight_iwr6843/gspro_adapter.py` | GSPro Open Connect client. |
 | `openflight_iwr6843/gain.py` | HiFiBerry capture-gain via pyalsaaudio (Linux only). |
-| `openflight_iwr6843/golf.cfg` | IWR6843 chirp profile, indoor (heavily commented re: antenna FoV). R_max 6.09 m. |
-| `openflight_iwr6843/golf-outdoor.cfg` | Outdoor chirp profile (D-5): 10 m gate at indoor-grade range res, ~43 driver fixes; auto-selected by run_iwr6843.py for --outdoor. |
+| `openflight_iwr6843/golf.cfg` | IWR6843 chirp profile, indoor (heavily commented re: antenna FoV). 3 TX (elevation!, audit V-1), 454.5 Hz, R_max 6.09 m. |
+| `openflight_iwr6843/golf-outdoor.cfg` | Outdoor chirp profile (D-5, reworked V-1/V-4): 10 m gate at indoor-grade range res, 3 TX, 333 Hz, ~36 driver fixes; auto-selected by run_iwr6843.py for --outdoor. |
 | `run_iwr6843.py` | Runs real hardware against the real OpenFlight server/UI. `--gspro-host` optional. |
 | `shot_simulator.py` | Type ball speed/spin/launch → RK4 flight sim. `--live` renders in real UI. |
 | `spin_capture_simulator.py` | Synthesize raw K-MC1 I/Q → test `spin_decoder.decode()`. No hardware. |
-| `geometry_capture_simulator.py` | Synthesize IWR6843 captures (swing-arc club + ballistic ball) → test `analyze()`'s track-based club/ball classifier (F-7). No hardware. |
+| `geometry_capture_simulator.py` | Synthesize IWR6843 captures (swing-arc club + ballistic ball) through a HOSTILE observation model (V-7: anisotropic elevation noise, bin quantization, wrong-hypothesis Doppler, statics, swaying golfer, false alarms, impact merge, burst gaps — all default-on, with ablation knobs) → test `analyze()`'s track-based classifier against measured 20-seed envelopes. No hardware. |
 | `scripts/setup_wizard.sh` | One-command Pi bring-up (clone+patch upstream, deps, Node/UI, HiFiBerry overlay, dialout, port auto-detect+udev, gain, writes `hardware.env`). |
 | `patches/simulate_custom_shot.patch` | The one additive change to upstream `server.py` that `--live` needs; wizard auto-applies. |
 | `openflight_iwr6843/docs/firmware-flashing.md` | Uniflash flashing guide + real SOP switch table + flash-vs-config explainer. |
@@ -106,7 +106,7 @@ patch. On a dev machine, symlink it for testing:
 | `openflight_iwr6843/docs/mounting.md` | Physical sensor mounting decision + rationale (side-by-side, one rigid plate, ~2m/height≈ball-height/10° tilt) and confirmed K-MC1/IWR6843ISK physical specs. |
 | `openflight_iwr6843/docs/mounting-plate.svg` | Top-view + side-view diagram of the mounting plate. |
 | `openflight_iwr6843/docs/datasheets-manifest.md` | Catalog of all primary datasheets at `~/Desktop/datasheets/` (external, git-ignored) and what's been confirmed from each. |
-| `openflight_iwr6843/docs/audit-log.md` | **Running audit log — REQUIRED reading.** Five audits: #1 F-series (code reading), #2 D-series (datasheets), #3 E-series (every-button execution), #4 FAILED (interrupted), #5 S-series (synthesized real stimuli: TLV byte streams, painted audio ring, live TCP/SocketIO wires). ALL findings closed as of 2026-07-05. Johnny's rules are enforced invariants (E-8 launch≥0, E-9 spin-window guard, F-7 directional gate). Known measurement limits documented in the log, not hidden. See HANDOFF §7 for the standing-state summary. |
+| `openflight_iwr6843/docs/audit-log.md` | **Running audit log — REQUIRED reading.** Six audits: #1 F-series (code reading), #2 D-series (datasheets), #3 E-series (every-button execution), #4 FAILED (interrupted), #5 S-series (synthesized real stimuli: TLV byte streams, painted audio ring, live TCP/SocketIO wires), #6 V-series (chip config vs Demo Visualizer + SDK User Guide — caught the missing-elevation-TX config, seven missing mandatory CLI commands, and a gravity sign bug that had been masquerading as a sensor limitation). ALL findings closed as of 2026-07-06. Johnny's rules are enforced invariants (E-8 launch≥0, E-9 spin-window guard, F-7 directional gate, V-3 anti-gravity gate). Known measurement limits documented in the log, not hidden. See HANDOFF §7 for the standing-state summary. |
 
 ---
 
@@ -186,14 +186,46 @@ patch. On a dev machine, symlink it for testing:
 
 ---
 
-## 7. Standing state after audits #1-#5 (2026-07-05)
+## 7. Standing state after audits #1-#6 (2026-07-06)
 
-**Five audits run, four methodologies, all findings closed** (full detail:
+**Six audits run, five methodologies, all findings closed** (full detail:
 `docs/audit-log.md`): F-series (code reading), D-series (datasheet
 verification), E-series (execution — "every button pressable"), S-series
 (synthesized real stimuli: TLV byte streams, painted audio ring, live TCP
-+ SocketIO wires). Audit #4 is recorded as FAILED (interrupted, no
-findings) — superseded by #5. Highlights a fresh session should know:
++ SocketIO wires), V-series (chip configuration vs the Demo Visualizer +
+mmWave SDK User Guide 3.6, both now in `~/Desktop/datasheets/`). Audit #4
+is recorded as FAILED (interrupted, no findings) — superseded by #5.
+Highlights a fresh session should know:
+
+- **Audit #6 rewrote both chirp cfgs and parts of analyze()** (2026-07-06):
+  the old cfgs enabled only the two AZIMUTH TX antennas (launch angle
+  would have been structurally zero on real hardware — V-1), omitted
+  seven mandatory CLI commands (sensorStart would be refused — V-2), and
+  ran over the demo's 50% duty ceiling once fixed (V-4). The 3-TX rework
+  shrank v_max_ext to ±37.9/±27.8 m/s, which cascaded through analyze()
+  (V-3: Doppler pre-filter removed, club-speed unfolding via track
+  range-rate, confidence denominator floor, Doppler tie-break in
+  clustering) and flushed out a **pre-existing gravity back-extrapolation
+  sign bug (V-3b)** that had been eating ~2 m/s of vz on chip-length
+  tracks — the documented "chip launch ~10° low" limit is retracted; the
+  simulator now recovers chip launch to within ~0.5°. Chirp order and the
+  mandatory-command values were then CONFIRMED against Visualizer-generated
+  cfgs Johnny exported (V-5; `3TX CONFIG.cfg`). Finally, **clutterRemoval
+  is now OFF in both sessions (V-6)**: the chip's bin-0 erasure silently
+  deleted balls whose Doppler folds to ~0 — dragged-ball sim showed
+  170–174 mph drives missed 8/8 seeds and a second dead band at ~85 mph;
+  off, every speed 150–180 measures at ≤3 mph error. Statics ride through
+  to the track classifier, which was built for exactly that (V-3). Then
+  **V-7 rebuilt the simulator hostile-by-default** (anisotropic elevation
+  noise, bin quantization, wrong-hypothesis extension, false alarms,
+  swaying golfer, impact merge, burst gaps) and the honest dirt exposed
+  five more pipeline defects — phantom shots from the club's arc-bottom
+  sweep at confidence 0.94, 267 mph false-alarm chains, a poisoned
+  BallTracker velocity seed, the flat-slow club/ball blend, isotropic-R
+  over-trust — all fixed and ablation-proven; final hostile envelopes:
+  driver ±1 mph/±1°, zero phantoms in 20 seeds. Residual limits are now
+  MEASURED numbers in the audit log ("Residual honest limits after V-7"),
+  not estimates.
 
 - **The classifier is track-based** (F-7): ball = ballistic suffix, club =
   fastest pre-birth row; two of Johnny's rules are enforced invariants —
@@ -208,10 +240,12 @@ findings) — superseded by #5. Highlights a fresh session should know:
 - **Security property S-2**: in hardware posture a web client cannot
   inject fake shots (`simulate_custom_shot` is mock-only by design); both
   postures pressed against a LIVE SocketIO server.
-- **Known measurement limits, documented not hidden**: chip-class launch
-  reads ~10° low (club/ball blend below the sensor's separability floor —
-  confidence correctly collapses); driver launch scatters ±2° (27 fixes in
-  the 6 m gate; the outdoor profile's ~43 fixes is the lever).
+- **Known measurement limits, documented not hidden**: driver launch
+  scatters ±2° from position noise (~25 fixes in the 6 m gate at 454.5 Hz;
+  the outdoor profile's ~36 fixes is the lever). The old "chip launch
+  ~10° low" limit was retracted in audit #6 (it was the V-3b sign bug,
+  not physics). Elevation is expected to be the noisiest axis on real
+  hardware (single λ/2 elevation baseline) — bench rung 5 owns it.
 - Every shot is fully logged locally: `captures/radar_<id>.npz` +
   `audio_<id>.npy` + one JSON line in `captures/shots.jsonl` (feeds
   `validate.py` directly).
@@ -225,7 +259,10 @@ findings) — superseded by #5. Highlights a fresh session should know:
   coefficients, `spin_conf_floor` per ball type, audio/radar clap-test
   latency, plateau-clip threshold, chip launch accuracy.
 - TLV 40-byte header + `compRangeBias` identity string + both chirp cfgs:
-  final confirmation at bring-up rungs 2-3 vs the flashed SDK 3.6.
+  final confirmation at bring-up rungs 2-3 vs the flashed SDK 3.6. The
+  V-5 chirp-order question is already CLOSED (Visualizer-generated 3-TX
+  cfg matches ours exactly — see `3TX CONFIG.cfg` in the datasheets
+  folder); the z-axis sign check (hand above boresight, rung 2) remains.
 - Exact xWR6843ISK board outline (measure the real board before machining
   the plate); board rev C-or-later check.
 

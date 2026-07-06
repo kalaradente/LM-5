@@ -29,14 +29,6 @@ except (ImportError, OSError):                        # allow offline replay
 from .session import SessionConfig
 from .spin_decoder import decode, FS
 
-# Defaults used only when no SessionConfig is supplied (matches the indoor
-# preset). With a session, ShotFuser reads these from it instead.
-SPIN_CONF_FLOOR = 0.35        # below this, fall back to inference
-AUDIO_PRE = 0.01              # s before impact: clock-slack guard ONLY --
-                              # pre-impact audio is the descending clubhead,
-                              # not data (audit E-9)
-AUDIO_POST = 0.15             # s after
-
 
 class AudioRing:
     """Continuous stereo ring buffer with monotonic timestamps."""
@@ -136,9 +128,10 @@ class ShotFuser:
         self.publish = publish
         self.audio = audio
         # Spin-side session presets: measured-spin confidence floor (per ball
-        # type) and the audio slice window (widens outdoors). Default session
-        # reproduces the old module-constant behaviour for the audio window;
-        # the plain-ball floor rises 0.35 -> 0.55 once a session is active.
+        # type) and the audio slice window (widens outdoors; pre stays a
+        # 10 ms clock-slack guard -- audit E-9). Every value comes from the
+        # session; callers that pass none get SessionConfig()'s indoor/plain
+        # defaults.
         self.session = session or SessionConfig()
         self.spin_conf_floor = self.session.spin_conf_floor
         self.audio_pre, self.audio_post = self.session.spin_audio_window_s

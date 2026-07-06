@@ -36,9 +36,10 @@ class SessionConfig:
         # Outdoor: 10 m, matching golf-outdoor.cfg's actual reach (R_max
         # 10.71 m at 140 MHz/us + 10 Msps -- audit D-5 resolved: the old
         # 15 m gate exceeded what any legal chirp under the 10 MHz IF cap
-        # could deliver at indoor-grade range resolution). ~43 driver
-        # fixes vs ~27 indoors. run_iwr6843.py auto-selects the outdoor
-        # cfg for outdoor sessions unless --cfg overrides.
+        # could deliver at indoor-grade range resolution). ~36 driver
+        # fixes at 333 Hz vs ~25 indoors at 454.5 Hz (3-TX profiles,
+        # audits V-1/V-4). run_iwr6843.py auto-selects the outdoor cfg
+        # for outdoor sessions unless --cfg overrides.
         return (0.3, 6.0) if self.environment == "indoor" else (0.3, 10.0)
 
     @property
@@ -49,9 +50,21 @@ class SessionConfig:
 
     @property
     def clutter_removal(self) -> bool:
-        # Static-background subtraction earns its keep in a bay; outdoors
-        # the scene is sparse and sensitivity is worth more.
-        return self.environment == "indoor"
+        # OFF in BOTH environments (audit V-6, 2026-07-06). The chip's
+        # static-clutter subtraction erases Doppler bin 0 BEFORE detection
+        # -- and TDM folding parks real balls there: radial speeds near
+        # every multiple of 2*v_max_ext (~85 mph and ~169 mph at the 3-TX
+        # indoor profile) fold to bin 0. Simulated with drag: drives
+        # launched 170-174 mph were missed on 8/8 seeds (the ball never
+        # decelerates out of the band inside the 6 m gate); ~85 mph irons
+        # and ~85 mph clubheads sit in the second band. With clutter
+        # removal off, the same sweep measures every speed (|err| <= 3 mph,
+        # ~21 fixes). Bay statics instead ride through as loitering tracks
+        # and die in the classifier (proven: the geometry simulator plants
+        # static reflectors). If a real bay floods the UART with static
+        # detections at rung 3, raise the indoor CFAR threshold via
+        # cfar_threshold_offset_db -- do NOT re-enable clutter removal.
+        return False
 
     @property
     def cfar_threshold_offset_db(self) -> float:
@@ -65,7 +78,7 @@ class SessionConfig:
     def spin_conf_floor(self) -> float:
         # Below this confidence, fall back to inferred spin. Placeholder
         # values; replace with bench-calibrated numbers per ball type
-        # (the rung-3 drill-rig experiment produces exactly this table).
+        # (the rung-4 drill-rig experiment produces exactly this table).
         return {"plain": 0.55, "marked": 0.40, "rct": 0.30}[self.ball_type]
 
     @property

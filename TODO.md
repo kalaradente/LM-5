@@ -97,6 +97,58 @@ Running list of open items. Newest relevant item first per section.
       GPIO pin (module only draws ~90mA; many power banks auto-shutoff
       below ~100-150mA and will drop the module mid-session).
 
+## From the 2026-07-05/06 chip-config audit #6 (V-series, see audit-log.md)
+
+- [x] **V-1 (CRITICAL, fixed): both cfgs now enable all 3 TX** (`channelCfg
+      15 7 0` + third chirpCfg). The old 0x5 mask was the two AZIMUTH
+      antennas only — no elevation estimation, z=0 on every point, launch
+      angle structurally dead. Primary source: mmWave SDK UG 3.6, channelCfg
+      ISK example (0x5 = azimuth pair, 0x7 = azimuth + elevation).
+- [x] **V-2 (HIGH, fixed): seven mandatory CLI commands added** to both
+      cfgs in stock disabled form (bpmCfg, lvdsStreamCfg, CQRxSatMonitor,
+      CQSigImgMonitor, analogMonitor, measureRangeBiasAndRxChanPhase,
+      calibData) — the demo refuses sensorStart when any is missing.
+- [x] **V-3/V-3b (HIGH, fixed): fold-aware analyze() + gravity sign bug.**
+      v_max_ext is now ±37.9 (indoor) / ±27.8 (outdoor): Doppler pre-filter
+      removed (balls folding to ~0 were deleted), club speed unfolded via
+      per-row track range-rate, confidence denominator floored, Doppler
+      tie-break in clustering, z-trim edge/first-half fixes — and the
+      launch back-extrapolation applied gravity with the WRONG SIGN
+      (dominant cause of the retracted "chip launch ~10° low" limit).
+- [x] **V-5 chirp order: CONFIRMED 2026-07-06** — Johnny exported the
+      Visualizer's generated 3-TX cfg (`3TX CONFIG.cfg` in
+      `~/Desktop/datasheets/`): chirps emit in exactly our order (TX1,
+      TX3, TX2 = masks 1, 4, 2), `channelCfg 15 7 0`, `frameCfg 0 2 16`.
+      One divergence adopted from it: `bpmCfg -1 0 0 1` (disable range =
+      azimuth chirps only), replacing our generalized `0 0 2`.
+- [ ] **V-5 at rung 2**: confirm the z-axis SIGN with the board in its
+      final mounting orientation (hand above boresight → z must go
+      positive; if inverted, MOUNT_TILT_DEG geometry and launch angle
+      flip sign).
+- [x] **V-6 (was a "documented limit" under V-5 — promoted and FIXED
+      2026-07-06): clutterRemoval OFF in both sessions.** The chip-side
+      bin-0 erasure wasn't a 10–25 ms nuisance: dragged-ball simulation
+      showed 170–174 mph drives missed on 8/8 seeds (ball never leaves
+      the band inside the 6 m gate), plus a SECOND band at ~83–87 mph
+      (irons, and driver clubheads). Off → every speed measures (≤3 mph
+      err, ~21 fixes). Statics are handled by the track classifier
+      (sim-proven).
+- [ ] **V-6 rung-3 watch**: with clutterRemoval off, watch indoor
+      points-per-frame / UART frame-skips in a real bay. If statics flood
+      the link, raise the indoor CFAR threshold via the session's
+      `cfar_threshold_offset_db` knob — do NOT re-enable clutterRemoval.
+      (UART arithmetic: ~5 detections/frame sustainable at 454.5 Hz /
+      921600 baud with points+SNR+stats enabled; beyond that the demo
+      throttles and frames() logs skips — F-1 timing survives skips.)
+- [x] **V-7 (2026-07-06): hostile-world stress hardening.** Simulator
+      rebuilt with default-on dirt (anisotropic elevation noise, bin
+      quantization, wrong-hypothesis Doppler extension, statics, swaying
+      golfer, CFAR false alarms, impact merge, burst gaps); five pipeline
+      defects it exposed are fixed (phantom club-sweep shots, false-alarm
+      chains, poisoned tracker seed, flat-slow blend, isotropic-R
+      over-trust). Hostile 20-seed envelopes: driver ±1 mph/±1°, zero
+      phantoms. Residual measured limits + retractions in audit-log.md.
+
 ## From the 2026-07-05 datasheet audit (see openflight_iwr6843/docs/audit-log.md)
 
 - [x] **D-1 (HIGH): fix the serial-port story across all docs/help text.**
@@ -132,16 +184,13 @@ Running list of open items. Newest relevant item first per section.
 - [x] **D-5 resolved (2026-07-05): golf-outdoor.cfg** — 10 m outdoor
       profile at indoor-grade range resolution (140 MHz/us slope + 10 Msps
       -> R_max 10.71 m, gate 10.0 m, res 4.78 cm, beat 9.34 MHz inside the
-      10 MHz IF cap, sweep 3.78 GHz inside the band). ~43 driver fixes vs
-      ~27 indoors (+60% observation -> tighter launch angles); 400 Hz
-      frames at 38% duty. v_max_ext drops to ±41.6 m/s — more Doppler
-      folding, by design (positions carry speed; confidence folds; one
-      corner: ~186 mph balls fold to ~0 and the CLUB triggers the capture
-      instead). Session outdoor gate aligned 15→10 m; run_iwr6843.py
-      auto-selects the cfg per session unless --cfg overrides; frame
-      period/v_max derive from the cfg automatically. UNVERIFIED on
-      hardware like everything else — rung 3 diffs both cfgs against the
-      flashed SDK.
+      10 MHz IF cap, sweep 3.78 GHz inside the band). Session outdoor gate
+      aligned 15→10 m; run_iwr6843.py auto-selects the cfg per session
+      unless --cfg overrides; frame period/v_max derive from the cfg
+      automatically. NUMBERS SUPERSEDED by audit #6 (V-1/V-4): now 3 TX,
+      333 Hz at 48% duty, ~36 driver fixes, v_max_ext ±27.8 m/s (see the
+      V-series section above). UNVERIFIED on hardware like everything
+      else — rung 3 diffs both cfgs against the flashed SDK.
 - [x] **D-6 closed (2026-07-05)** — DAC2 ADC Pro datasheet now in
       `~/Desktop/datasheets/`. gain.py's figures verified (−12…+32dB, 96kHz,
       overlay). Two NEW bring-up requirements it surfaced, both handled:
@@ -172,10 +221,13 @@ Running list of open items. Newest relevant item first per section.
       precisely at ball birth). Verified by the new
       `geometry_capture_simulator.py` (swing-arc club model + FoV gate +
       folded Doppler + USB-chunked timestamps): 4 scenarios x 6 noise
-      seeds, 0 failures; no phantom practice-swing shots. Known limits
-      documented in the audit log (chip launch ~10 deg low, driver launch
-      +/-2 deg scatter). Real captures replayed through analyze() re-test
-      this for free once hardware exists.
+      seeds, 0 failures; no phantom practice-swing shots. Real captures
+      replayed through analyze() re-test this for free once hardware
+      exists. (The old known-limit notes here — "chip launch ~10 deg low,
+      driver ±2 deg scatter" — are both superseded: the chip bias was
+      mostly the V-3b gravity sign bug, and V-7's hostile simulator
+      replaced estimates with measured envelopes. Current truth lives in
+      audit-log.md "Residual honest limits after V-7".)
 
 - [x] Kalman-smoothed carrier tracker + 3D ballistic tracker (`kalman.py`)
 - [x] Harmonic-sum ("tap-along") spin bank replacing naive peak-pick
@@ -244,11 +296,11 @@ Running list of open items. Newest relevant item first per section.
 - [ ] Fit real coefficients for `shot_fusion.infer_spin()` (currently a
       placeholder surface) once truth data exists.
 - [ ] Fit real per-ball-type `spin_conf_floor` values in `session.py`
-      (currently placeholders) from rung-3 drill-rig results.
+      (currently placeholders) from rung-4 drill-rig results.
 - [ ] One-time audio/radar timestamp latency calibration (clap test:
-      compare piezo trigger time vs. audio arrival time) so the
-      `AUDIO_PRE`/`AUDIO_POST` window in `shot_fusion.py` is centered
-      correctly rather than just generously padded.
+      compare piezo trigger time vs. audio arrival time) so the session's
+      `spin_audio_window_s` pre/post window is centered correctly rather
+      than just generously padded.
 
 ## Process
 
@@ -283,6 +335,11 @@ Running list of open items. Newest relevant item first per section.
       identity/no-compensation default (`0.0` + twelve `1 0` pairs). Still
       REPLACE with the board's own measured rangeBias/rxChanPhase string at
       bring-up. Final per-SDK-version diff still pending once the board flashes.
+      NB (audit #6): this arg-count audit checked only commands that were
+      PRESENT — it missed both the wrong TX mask (V-1) and seven missing
+      mandatory commands (V-2). Completeness now audited against the SDK
+      UG's full mandatory list (the UG PDF is now on disk in
+      `~/Desktop/datasheets/mmwave visualizer user guide/`).
 - [ ] Read OpenFlight's actual source/README once repo access happens, to
       confirm (rather than infer) the real reason for the sound trigger
       and rolling buffer, before posting anything publicly that

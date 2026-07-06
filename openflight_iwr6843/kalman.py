@@ -102,6 +102,15 @@ class BallTracker:
     iwr6843_source.py) before computing a world-referenced launch angle.
     """
 
+    # Angle-derived noise growth, m of position error per m of range
+    # (audit V-7): azimuth from the 8-element virtual row, elevation from
+    # the single TX2 offset row -- the coarsest axis by far. Sensor axes
+    # x/y/z ~ azimuth/range/elevation-driven (exact at boresight, close
+    # enough across our +/-60 deg gate). Placeholder magnitudes from
+    # array geometry; bench rung 5 owns the real numbers.
+    AZ_SIG_PER_M = 0.015
+    EL_SIG_PER_M = 0.032
+
     def __init__(self, q_accel=6.0**2, r_pos=0.06**2, gate=5.0, tilt_rad=0.0):
         self.q = q_accel
         self.r = r_pos
@@ -112,11 +121,33 @@ class BallTracker:
         self.g_sensor_y = -G * np.sin(tilt_rad)
         self.g_sensor_z = -G * np.cos(tilt_rad)
 
+    def _meas_R(self, p: np.ndarray) -> np.ndarray:
+        """Per-measurement anisotropic R (audit V-7): a fixed isotropic R
+        over-trusts elevation exactly where it is worst (far range), which
+        both dragged launch-angle fits around and let junk through the
+        5-sigma gate. Floors keep the old r_pos behaviour at close range."""
+        rng_m = float(np.linalg.norm(p))
+        base = np.sqrt(self.r)
+        sx = max(0.7 * base, self.AZ_SIG_PER_M * rng_m)
+        sy = 0.8 * base
+        sz = max(base, self.EL_SIG_PER_M * rng_m)
+        return np.diag([sx * sx, sy * sy, sz * sz])
+
     def smooth(self, t: np.ndarray, xyz: np.ndarray):
         n = len(t)
         H = np.hstack([np.eye(3), np.zeros((3, 3))])
-        R = self.r * np.eye(3)
-        v0 = (xyz[min(2, n - 1)] - xyz[0]) / max(t[min(2, n - 1)] - t[0], 1e-3)
+        # Seed velocity from MEDIAN-of-endpoint positions, not the first
+        # three rows (audit V-7 -- the same lesson as FreqTracker's E-9
+        # median seed): one junk row at track birth used to poison the
+        # first-rows seed, the 5-sigma gate then rejected the REAL rows as
+        # inconsistent with the bad prediction, and the surviving fit
+        # reported a 176 mph / 59 deg rocket from an ordinary 7-iron. The
+        # median of three rows at each end shrugs off a single bad row.
+        k = min(3, n)
+        p0 = np.median(xyz[:k], axis=0)
+        p1 = np.median(xyz[-k:], axis=0)
+        dt0 = max(float(np.median(t[-k:]) - np.median(t[:k])), 1e-3)
+        v0 = (p1 - p0) / dt0
         x = np.concatenate([xyz[0], v0])
         P = np.diag([self.r] * 3 + [25.0] * 3)
         xs, Ps, xps, Pps, Fs = [], [], [], [], []
@@ -134,6 +165,7 @@ class BallTracker:
             xp = F @ x + u
             Pp = F @ P @ F.T + Q
             innov = xyz[k] - H @ xp
+            R = self._meas_R(xyz[k])
             S = H @ Pp @ H.T + R
             md2 = float(innov @ np.linalg.inv(S) @ innov)
             if md2 <= self.gate**2:

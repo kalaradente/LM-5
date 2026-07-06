@@ -5,9 +5,9 @@ K-LD7 rig with two channels:
 
 - **Geometry**: TI IWR6843ISK (60GHz FMCW, 3TX/4RX) over USB — ball speed,
   launch angle, side angle, club speed, shot trigger.
-- **Spin**: RFbeam K-MC1 (24GHz CW, amplified I/Q) into a stereo USB audio
-  interface — measured spin RPM with confidence, falling back to inferred
-  spin from launch conditions.
+- **Spin**: RFbeam K-MC1 (24GHz CW, amplified I/Q) into a HiFiBerry
+  DAC2 ADC Pro (stereo line-in HAT on the Pi) — measured spin RPM with
+  confidence, falling back to inferred spin from launch conditions.
 
 Everything downstream of OpenFlight's `on_shot()` (Flask, WebSocket, physics
 engine, React UI) is untouched.
@@ -21,21 +21,36 @@ engine, React UI) is untouched.
 | `kalman.py` | Shared filters: `FreqTracker` (1D carrier, gated + RTS-smoothed), `BallTracker` (3D constant-velocity + gravity) |
 | `session.py` | Session mode selector: indoor/outdoor × ball type (plain/marked/rct) → parameter presets for both channels + shot-record tags |
 | `shot_fusion.py` | Audio ring buffer, geometry+spin merge with per-field provenance, OpenFlight publish adapter |
+| `gspro_adapter.py` | GSPro Open Connect client (TCP JSON + heartbeat), fed by `run_iwr6843.py --gspro-host` |
+| `gain.py` | HiFiBerry capture-gain control via pyalsaaudio (Pi/Linux only) |
 | `validate.py` | Scores pipeline CSV output against an Eye XO / Trackman truth export |
-| `golf.cfg` | IWR6843 chirp profile (design intent — diff against your SDK's demo profile before use) |
+| `golf.cfg` | IWR6843 chirp profile, indoor (design intent — diff against your SDK's demo profile before use) |
+| `golf-outdoor.cfg` | Outdoor chirp profile: 10 m gate at indoor-grade range resolution; auto-selected by `run_iwr6843.py --outdoor` |
+| `docs/` | Audit log (**required reading**), firmware flashing, K-MC1 harness, mounting decision, datasheets manifest |
 
 ## Wiring
 
-- IWR6843ISK → one micro-USB to the Pi (CLI port 115200, data port 921600).
-- K-MC1: wire the **AC output** pins — I → left line input, Q → right line
-  input, same gain both channels; clean 5V supply (battery pack or linear
-  regulator). AC is all you need: it's cleaner (no DC offset/hum) and reads
-  every real flight shot, including low-spin drivers, because spin rides as
-  sidebands on the kHz Doppler carrier (all inside AC's 40Hz–15kHz band).
-- No custom PCB, no soldering beyond four header wires on the K-MC1.
+Full buy-and-solder reference: `docs/kmc1-harness.md`. The short version:
+
+- IWR6843ISK → one micro-USB to the Pi (CP2105 bridge → two `/dev/ttyUSB*`
+  ports: CLI 115200, data 921600).
+- K-MC1 (**order the -00D 5V variant**): wire the **AC output** pins —
+  I → left line input, Q → right line input, same gain both channels;
+  5V from the Pi's header through a ferrite bead + decoupling caps; and
+  **Pin 1 (/Enable) hardwired to GND** — it has an internal pullup, so left
+  floating the radar is silently OFF. AC is all you need: it's cleaner (no
+  DC offset/hum) and reads every real flight shot, including low-spin
+  drivers, because spin rides as sidebands on the kHz Doppler carrier (all
+  inside AC's 40Hz–15kHz band).
+- No custom PCB, no soldering beyond five header wires on the K-MC1
+  (I, Q, 5V, GND, /Enable-to-GND).
 
 ## Bring-up ladder
 
+(Same numbering as `HANDOFF.md` §8.)
+
+0. Flash the IWR6843 firmware on Windows via Uniflash — see
+   `docs/firmware-flashing.md`. The Pi never flashes the board.
 1. TI mmWave Demo Visualizer + stock config: wave your hand (proves board).
 2. This parser against the same stream: positions must match the visualizer.
 3. Load `golf.cfg` (after diffing argument formats against your SDK version);
@@ -90,7 +105,10 @@ research, not product. Replace the placeholder coefficients in
 Synthetic end-to-end tests pass (exact spin recovery at 6000/3000rpm through
 noise and clutter; launch angle within 0.5° over 40 noise seeds; junk-fix
 rejection). Nothing here has yet seen a real golf ball: `golf.cfg` CFAR
-thresholds, `SPIN_CONF_FLOOR`, tracker noise parameters, and the spin
-inference surface all need tuning against real captures. Known open items:
-driver-spin dwell (sub-revolution observation), UART frame-skip monitoring
-at high frame rates (logged automatically), per-unit RX phase calibration.
+thresholds, the per-ball-type spin confidence floors in `session.py`,
+tracker noise parameters, and the spin inference surface all need tuning
+against real captures. Known open items:
+plain-ball spin modulation depth at driver speeds (bench rung 4 — the old
+"sub-revolution dwell" concern here was stale math: even the indoor 0.15 s
+window sees ~6.5 revolutions at 2600 rpm), UART frame-skip monitoring at
+high frame rates (logged automatically), per-unit RX phase calibration.

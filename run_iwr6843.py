@@ -93,6 +93,47 @@ def _load_hardware_env() -> dict:
     return out
 
 
+def _assert_adc_routing(env: dict) -> None:
+    """Re-assert the HiFiBerry ADC input routing (and capture gain, if the
+    wizard recorded one) from hardware.env at every startup.
+
+    Why every startup: ALSA mixer state only survives a CLEAN shutdown
+    (alsa-restore replays what alsactl last stored). A power-yanked Pi boots
+    with driver defaults, and the PCM1863's default input mux is not our
+    single-ended wiring -- capture then reads pure silence, which looks
+    exactly like a dead K-MC1 (audit D-6). Best-effort by design: a warning,
+    never a fatal error, because the operator may be mid-rewire."""
+    card = env.get("HIFIBERRY_CARD")
+    if not card:
+        return
+    import subprocess
+    for control, value in (("ADC Mic Bias", "Mic Bias off"),
+                           ("ADC Left Input", "VINL1[SE]"),
+                           ("ADC Right Input", "VINR1[SE]")):
+        try:
+            subprocess.run(["amixer", "-c", card, "sset", control, value],
+                           check=True, capture_output=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            log.warning("[audio] couldn't set %r on card %s -- check the ADC "
+                        "routing by hand (amixer -c %s controls); wrong mux = "
+                        "silent capture", control, card, card)
+    gain_control, gain_db = env.get("GAIN_CONTROL"), env.get("GAIN_DB")
+    if gain_control and gain_db:
+        try:
+            from openflight_iwr6843 import gain as gain_mod
+            if gain_mod.alsaaudio is None:
+                raise RuntimeError("pyalsaaudio unavailable")
+            gain_mod.set_gain_db(float(gain_db), control=gain_control,
+                                 cardindex=int(card))
+            log.info("[audio] capture gain re-asserted: %s dB on %r",
+                     gain_db, gain_control)
+        except Exception as e:  # pylint: disable=broad-except
+            log.warning("[audio] couldn't re-assert capture gain (%s) -- set "
+                        "it by hand: python -m openflight_iwr6843.gain set %s "
+                        "--card %s --control '%s'", e, gain_db, card,
+                        gain_control)
+
+
 def _fused_to_shot(fused: dict, club: ClubType) -> Shot:
     """Adapt shot_fusion's fused dict to openflight's Shot dataclass, tagged
     mode="hardware" (not "mock") so on_shot_detected runs the real carry
@@ -309,6 +350,10 @@ def main() -> None:
             log.warning("[gspro] connect to %s:%s failed (%s) -- continuing "
                         "without GSPro", args.gspro_host, args.gspro_port, e)
             gspro = None
+
+    # Re-assert the HiFiBerry ADC mux/gain before the audio ring opens the
+    # device -- guards against post-power-cut ALSA defaults (audit D-6).
+    _assert_adc_routing(env)
 
     # sounddevice treats a numeric STRING as a device-name substring, not
     # an index -- hardware.env's AUDIO_DEVICE=2 must become int 2 or it

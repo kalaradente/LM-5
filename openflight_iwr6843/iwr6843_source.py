@@ -63,9 +63,13 @@ class Frame:
 
 
 class IWR6843Source:
-    BALL_MIN_SPEED = 7.6    # 17 mph — chip/putt shots trigger and classify as ball
-    CLUB_MIN_SPEED = 4.0    # ~9 mph, kept below BALL_MIN_SPEED so slow-shot
-                            # points still classify as club rather than ball
+    BALL_MIN_SPEED = 7.6    # 17 mph — trigger threshold on FOLDED Doppler.
+                            # Real speeds folding to under this (~152-186
+                            # mph indoor, ~107-141 mph outdoor at the 3-TX
+                            # v_max_ext) don't self-trigger; the clubhead's
+                            # folded Doppler sweeps the readable band on
+                            # its way up and trips the capture instead
+                            # (audit V-3; pre-roll covers the ball birth).
     PRE_ROLL = 0.15
     MIN_BALL_FIXES = 4
     COOLDOWN = 2.0
@@ -105,14 +109,17 @@ class IWR6843Source:
         # the Kalman fit's dt exactly when frames throttle -- mid-shot).
         self.frame_period = self._parse_frame_period(cfg_path)
         # Extended max unambiguous velocity, derived from the same cfg
-        # (audit F-2): lambda/(4 * Ntx * Tc), x2 when extendedMaxVelocity is
-        # on. For golf.cfg: 4.9965mm/(4 * 2 * 22us) = +/-28.4 m/s native,
-        # +/-56.8 m/s extended (+/-127 mph). Real drives (140-180 mph)
-        # STILL alias past even the extended limit -- the radar folds their
-        # Doppler back into [-v_max_ext, +v_max_ext). Ball SPEED is immune
-        # (it comes from the position track, not Doppler), but anything
-        # comparing against raw Doppler must fold its expectation first
-        # (see analyze()'s geometry_confidence).
+        # (audit F-2): lambda/(4 * Ntx * Tc), x2 when extendedMaxVelocity
+        # is on (the SDK UG 3.6 says the feature "corrects target
+        # velocities up to (2*vmax)" -- exactly x2, primary-confirmed,
+        # audit V-3). For the 3-TX golf.cfg: 4.9965mm/(4 * 3 * 22us) =
+        # +/-18.9 m/s native, +/-37.9 m/s extended (+/-85 mph). Real shots
+        # alias past this -- the radar folds their Doppler back into
+        # [-v_max_ext, +v_max_ext). Ball SPEED is immune (it comes from
+        # the position track, not Doppler), but anything touching raw
+        # Doppler must handle folding: geometry_confidence folds its
+        # expectation, and club speed is unfolded against the club
+        # track's own range-rate (see analyze()).
         self.v_max_ext = self._parse_vmax_ext(cfg_path)
         self._buf = bytearray()
         self._pre_roll: deque[Frame] = deque()
@@ -159,7 +166,7 @@ class IWR6843Source:
         except (OSError, ValueError):
             pass
         if f0 is None or idle is None or ramp is None:
-            return 56.8                                   # golf.cfg's value
+            return 37.9                                   # golf.cfg's value
         lam = 299792458.0 / f0
         return ext * lam / (4.0 * (idle + ramp) * ntx)
 
@@ -193,7 +200,10 @@ class IWR6843Source:
             rmin, rmax = self.range_gate
             tok[3], tok[4] = f"{rmin:g}", f"{rmax:g}"
             return " ".join(tok)
-        # Static-clutter subtraction: on indoors (cluttered bay), off outdoors.
+        # Static-clutter subtraction: OFF in both sessions (audit V-6 --
+        # bin-0 removal deletes balls whose Doppler folds to ~0; see
+        # session.clutter_removal). Kept as a session-driven rewrite so
+        # the decision lives in one place.
         if key == "clutterRemoval" and len(tok) >= 3:
             tok[2] = "1" if self.session.clutter_removal else "0"
             return " ".join(tok)
@@ -387,16 +397,32 @@ class IWR6843Source:
     # could report a phantom shot from club points alone).
 
     @staticmethod
-    def _cluster_tracks(moving: list) -> list:
+    def _meas_sigma(p) -> np.ndarray:
+        """Expected 1-sigma measurement noise PER AXIS at this point.
+        The radar's noise is not isotropic (audit V-7): range comes from
+        the beat frequency (bin-quantized but precise), azimuth from the
+        8-element virtual row (fine), elevation from the SINGLE offset
+        TX2 row -- by far the coarsest axis, and angle-derived errors
+        grow linearly with range. Sensor axes: x ~ azimuth-driven,
+        y ~ range-driven, z ~ elevation-driven (exact only at boresight;
+        good enough for gating). Coefficients are array-geometry
+        placeholders (0.9 deg az, 1.8 deg el) -- bench rung 5 owns them."""
+        r = float(np.linalg.norm(p))
+        return np.array([max(0.04, 0.015 * r),      # x: r * sigma_az
+                         0.05,                       # y: range bin + jitter
+                         max(0.06, 0.032 * r)])      # z: r * sigma_el
+
+    def _cluster_tracks(self, moving: list) -> list:
         """Track builder with frame-wise best-error-first assignment.
         `moving` = time-sorted rows (t, x, y, z, s). Points are grouped per
         frame; all (track, point) prediction errors in that frame are
         assigned smallest-first, each track and each point used at most
         once -- point-order-greedy is order-sensitive exactly at impact,
         when club and ball are co-located and one steals the other's point.
-        At 500 Hz even an 80 m/s ball steps only 16 cm/frame, so position
-        continuity plus a crude last-two-points velocity estimate separates
-        the (at most ~2) real objects. Returns ndarrays."""
+        Association is ANISOTROPIC (audit V-7): errors are normalized by
+        the per-axis expected noise at that range, so a CFAR false alarm
+        one range bin off is correctly rejected even though the elevation
+        axis alone would have tolerated it. Returns ndarrays."""
         tracks: list[dict] = []
         i = 0
         while i < len(moving):
@@ -412,15 +438,55 @@ class IWR6843Source:
                 dt = t - tr["t"]
                 if not (1e-9 < dt <= 0.06):   # dead after 60 ms silent
                     continue
+                immature = len(tr["pts"]) < 2
+                # Immature tracks (no velocity yet) may only bridge a
+                # couple of flicker frames (audit V-7): with the old open
+                # 60 ms window plus a 90 m/s velocity-uncertainty gate,
+                # pairs of RANDOM false alarms several frames apart could
+                # chain into phantom "tracks" that later outbid the real
+                # ball on range gain (267 mph phantoms in the hostile
+                # simulator). Real objects at a ~2 ms frame period appear
+                # on consecutive frames, flickering 1-2 at most.
+                if immature and dt > 3.5 * self.frame_period:
+                    continue
                 pred = tr["pos"] + tr["vel"] * dt
-                # Base gate covers position noise; the dt term covers an
-                # unestablished velocity (worst case ~90 m/s ball) across
-                # skipped frames.
-                gate = 0.4 + (90.0 if len(tr["pts"]) < 2 else 25.0) * dt
+                # A track predicted OUTSIDE the range gate is over: the
+                # chip cannot see there, so anything it would grab is by
+                # definition junk (audit V-7: a ball that exited at 6 m
+                # coasted to a predicted 7.2 m and adopted a false alarm
+                # 1.5 m behind it, bending the accel fit past its
+                # threshold -- a lost shot).
+                pred_r = float(np.linalg.norm(pred))
+                if not (self.range_gate[0] - 0.3 < pred_r
+                        < self.range_gate[1] + 0.3):
+                    continue
+                # Per-axis slack: measurement noise at this range plus
+                # velocity uncertainty across the gap (capped -- a mature
+                # track coasting through the UART burst gap must not
+                # balloon into a half-meter grab-anything gate).
+                v_unc = min((90.0 if immature else 25.0) * dt, 0.45)
                 for pi, row in enumerate(frame_rows):
-                    err = float(np.linalg.norm(np.array(row[1:4]) - pred))
-                    if err < gate:
-                        pairs.append((err, ti, pi))
+                    e = np.abs(np.array(row[1:4]) - pred)
+                    sig = self._meas_sigma(row[1:4]) + v_unc
+                    d = float(np.linalg.norm(e / sig))
+                    # Doppler tie-break (audit V-3): a chip-speed ball and
+                    # the club's follow-through separate at ~1 m/s --
+                    # inside position noise for many frames, so
+                    # position-only pairing interleaves their tracks (a
+                    # mixed "ball" fit read 18% fast). Their DOPPLER
+                    # differs though; a capped penalty at the scale of
+                    # typical normalized error breaks exactly those ties
+                    # without overriding genuine position evidence -- and
+                    # stays harmless at fold discontinuities (penalty
+                    # tops out at 1.0 vs a 3.5 gate). It counts toward
+                    # ADMISSION too (audit V-7): a marginally-in-gate
+                    # point with wildly wrong Doppler is junk, not a
+                    # continuation -- ranking-only penalties let one
+                    # such row bend a real ball track's accel fit past
+                    # its threshold.
+                    s_pen = min(abs(row[4] - tr["pts"][-1][4]), 3.0) / 3.0
+                    if d + s_pen < 3.5:
+                        pairs.append((d + s_pen, ti, pi))
             pairs.sort()
             used_t, used_p = set(), set()
             for err, ti, pi in pairs:
@@ -429,8 +495,16 @@ class IWR6843Source:
                 used_t.add(ti); used_p.add(pi)
                 tr, row = tracks[ti], frame_rows[pi]
                 p = np.array(row[1:4])
-                dt = t - tr["t"]
-                tr["vel"] = (p - tr["pos"]) / dt
+                # Velocity over up to 3 rows back, not adjacent-row finite
+                # difference: at a 2.2 ms frame period, two-point dp/dt
+                # turns 3.5 cm position noise into ~40 m/s of velocity
+                # noise, and one bad estimate right before a dropped frame
+                # threw the prediction outside the gate and SPLIT a real
+                # ball track (halving its range gain below the ballistic
+                # classifier's floor). A 3-row baseline cuts that noise
+                # ~3x while still tracking the club's real acceleration.
+                back = tr["pts"][max(0, len(tr["pts"]) - 3)]
+                tr["vel"] = (p - np.array(back[1:4])) / (t - back[0])
                 tr["pts"].append(row)
                 tr["pos"], tr["t"] = p, t
             for pi, row in enumerate(frame_rows):
@@ -467,15 +541,77 @@ class IWR6843Source:
         Earliest qualifying start in the largest-gain track wins, so
         t_birth lands at impact, not mid-flight."""
         best = None                        # (gain, track_idx, start_idx)
+        tilt = math.radians(self.MOUNT_TILT_DEG)
+        sin_t, cos_t = math.sin(tilt), math.cos(tilt)
         for ti, tr in enumerate(tracks):
             n = tr.shape[0]
             if n < min_fixes:
                 continue                  # fragments: tee, turf, multipath
             r_all = np.linalg.norm(tr[:, 1:4], axis=1)
-            for st in range(0, n - min_fixes + 1):
+            # De-tilted world z, for the head trim below (same math as
+            # analyze()'s trim, which becomes a no-op safety once the trim
+            # happens here).
+            zw = tr[:, 2] * sin_t + tr[:, 3] * cos_t
+            z_smooth = np.convolve(zw, np.ones(3) / 3.0, mode="same")
+            tried: set = set()
+            for st0 in range(0, n - min_fixes + 1):
+                # HEAD-TRIM AT THE Z-MINIMUM *before* judging the suffix
+                # (audit V-7). Trimming used to happen after picking, and
+                # that ordering broke both ways at once: a real driver's
+                # only >=40 ms suffixes still carried club-handoff head
+                # rows whose curvature blew the accel fit (lost shots),
+                # while the clubhead's own arc-bottom sweep -- descending
+                # z, then rising -- survived as a "ball" because its
+                # z-kink was never cut (phantom shots). Trimmed first,
+                # the ball candidate starts at the physical impact and
+                # the club remnant shrinks below the span floor.
+                # The trim fires ONLY when the segment genuinely DESCENDS
+                # into the minimum (>6 cm) -- that is what a club head
+                # looks like -- and the minimum is searched in the FIRST
+                # HALF of the suffix only, the same first-half rule
+                # analyze()'s own trim learned in V-3: a flat shot's apex
+                # passes inside the window, so its GLOBAL z-minimum is
+                # the descending tail, and anchoring there discarded the
+                # entire shot (bump-and-run misses via dedupe collapse).
+                half = st0 + max(1, (n - st0) // 2)
+                k_min = st0 + int(np.argmin(z_smooth[st0:half]))
+                descent = float(z_smooth[st0] - z_smooth[k_min])
+                st = k_min if (descent > 0.06
+                               and n - k_min >= min_fixes) else st0
+                if st in tried:
+                    continue
+                tried.add(st)
                 r, t = r_all[st:], tr[st:, 0]
                 gain = float(r[-1] - r[0])
                 if gain < 1.2 or (best is not None and gain <= best[0]):
+                    continue
+                # Physical rate ceiling (audit V-7): gain/span is the
+                # suffix's implied mean radial speed. No golf ball moves
+                # 105 m/s (235 mph); a chain of false alarms happily
+                # "moves" much faster, and gain-first selection would
+                # crown it (267 mph phantoms in the hostile simulator).
+                # Minimum SPAN (audit V-7): every real ball's visible
+                # flight lasts >= ~50 ms (the fastest ball, ~98 m/s,
+                # needs 42 ms just to cross the 2->6.09 m gate; slower
+                # balls stay longer, outdoor gates are longer still).
+                # Shorter suffixes are also exactly where the
+                # covariance-scaled accel test below loses its teeth
+                # (quadratic-coefficient variance blows up as 1/T^4) --
+                # the clubhead's ~40 ms arc-bottom sweep slipped through
+                # BOTH holes at once and became a 97 mph phantom shot on
+                # a practice swing, at confidence 0.94.
+                span = float(t[-1] - t[0])
+                if span < 0.04 or gain / span > 105.0:
+                    continue
+                # FILL RATIO (audit V-7): a ball inside the gate is a
+                # strong coherent reflector -- the chip detects it nearly
+                # every frame. The club's top-of-finish tail (7 sparse
+                # rows across 88 ms of flickering glints, rising range,
+                # arc-top accel too slow to trip the ballistic test)
+                # passed everything else and published an 83 mph phantom
+                # on a practice swing. Sparse candidates are glints or
+                # false-alarm chains, never the ball.
+                if len(r) / (span / self.frame_period + 1.0) < 0.5:
                     continue
                 lag = max(1, len(r) // 8)
                 diffs = r[lag:] - r[:-lag]
@@ -497,43 +633,91 @@ class IWR6843Source:
                 # rejects ~10-15% of genuine drives on unlucky noise draws.
                 # 4 sigma of headroom keeps that under ~1% while every
                 # full-swing club arc (450-2000 m/s^2) stays far outside.
+                # (The short-window regime where this covariance term
+                # explodes and goes toothless is fenced off upstream by
+                # the span floor + z-min head trim, not by capping here --
+                # a cap tight enough to catch clubs false-rejected real
+                # drives under honest elevation noise. Audit V-7.)
                 a_thresh = max(150.0, 9.81 + 4.0 * math.sqrt(var_a))
                 if float(np.linalg.norm(acc)) > a_thresh:
+                    continue
+                # ANTI-GRAVITY GATE (audit V-3): a free ball can never
+                # accelerate UPWARD -- gravity only pulls down. A slow
+                # club's follow-through, though, leaves the arc bottom
+                # accelerating up at ~R*w^2 (+55 m/s^2 for a chip swing,
+                # thousands for a driver), yet its |accel| can sneak under
+                # the ballistic threshold above precisely for slow swings.
+                # Fitted vertical acceleration is evaluated in WORLD z
+                # (de-tilted); the allowance is the fit's own noise floor
+                # (per-axis), so long clean tracks enforce this tightly
+                # while short noisy ones aren't false-rejected.
+                az_world = acc[1] * sin_t + acc[2] * cos_t
+                if az_world > max(25.0, 4.0 * math.sqrt(var_a / 3.0)):
                     continue
                 best = (gain, ti, st)
         return best
 
-    def analyze(self, capture: list) -> Optional[dict]:
-        if not capture:
-            return None      # empty/corrupt archive replayed offline (E-1)
+    def _unfold(self, s: float, slope: Optional[float]) -> float:
+        """True |radial speed| candidates for a reported Doppler label are
+        |s + k*v_max_ext|, k any integer (audit V-3, spacing corrected in
+        V-7): the radar folds into [-v_max_ext, +v_max_ext) -- EVEN
+        multiples of 2*v_max_native -- but the x2 extension can also pick
+        the WRONG hypothesis (the SDK UG's own same-range-bin caveat),
+        shifting the label by ODD multiples of 2*v_max_native. Since
+        v_max_ext = 2*v_max_native, stepping candidates at v_max_ext
+        covers both error modes; the original 2*v_max_ext spacing missed
+        every wrong-hypothesis row, so a club row labeled 9.5 m/s at true
+        ~46 m/s unfolded to 66 (a 148 mph 'clubhead'). The track's own
+        range-rate -- coarse but fold-free, branches 18.9 m/s apart --
+        picks the branch. Without a usable slope the raw reading is kept,
+        which is correct whenever the true speed is inside +/-v_max_ext
+        and the hypothesis was right (every chip/putt, most irons)."""
+        if slope is None:
+            return float(s)
+        m = self.v_max_ext
+        cands = [abs(s + k * m) for k in (-3, -2, -1, 0, 1, 2, 3)]
+        return float(min(cands, key=lambda c: abs(c - slope)))
+
+    def _capture_rows(self, capture: list) -> tuple[float, list]:
+        """Front half of analyze(): flatten a capture
+        into time-sorted (t, x, y, z, |v|) rows. Returns (t0, rows).
+
+        Time base (audit F-1): radar frame numbers x framePeriodicity give
+        jitter-free relative time and inherently account for skipped
+        frames; host arrival times (f.t) carry USB-chunking jitter. Fall
+        back to arrival times only if frame numbers are missing (old
+        archives) or non-monotonic (sensor restart mid-capture).
+
+        Collects EVERY point, static included -- classification happens
+        at track level (audit F-7), and a Doppler-magnitude pre-filter
+        is a TRAP under TDM folding (audit V-3): a real ball whose
+        radial speed lands near a multiple of 2*v_max_ext folds to
+        ~0 m/s (~160-178 mph indoors, ~115-133 mph outdoors), so any
+        "must look fast" gate silently deletes exactly the best shots.
+        Static clutter that survives the chip's own CFAR/clutter config
+        just becomes loitering tracks with no ballistic suffix -- the
+        classifier already rejects those."""
         t0 = capture[0].t
-        # Time base (audit F-1): radar frame numbers x framePeriodicity give
-        # jitter-free relative time and inherently account for skipped
-        # frames; host arrival times (f.t) carry USB-chunking jitter. Fall
-        # back to arrival times only if frame numbers are missing (old
-        # archives) or non-monotonic (sensor restart mid-capture).
         nums = [f.num for f in capture]
         use_nums = (all(n is not None for n in nums)
                     and all(b >= a for a, b in zip(nums, nums[1:])))
         n0 = nums[0] if use_nums else None
-
-        def f_time(f: Frame) -> float:
-            if use_nums:
-                return (f.num - n0) * self.frame_period
-            return f.t - t0
-
-        # Collect EVERY moving point (club included) -- classification
-        # happens at track level, not by speed band (audit F-7).
-        moving = []
+        rows = []
         for f in capture:
+            ft = ((f.num - n0) * self.frame_period if use_nums
+                  else f.t - t0)
             for i in range(f.points.shape[0]):
                 x, y, z, v = f.points[i]
-                s = abs(v)
-                if s > self.CLUB_MIN_SPEED:
-                    moving.append((f_time(f), x, y, z, s))
+                rows.append((ft, x, y, z, abs(v)))
+        rows.sort(key=lambda r: r[0])
+        return t0, rows
+
+    def analyze(self, capture: list) -> Optional[dict]:
+        if not capture:
+            return None      # empty/corrupt archive replayed offline (E-1)
+        t0, moving = self._capture_rows(capture)
         if len(moving) < self.MIN_BALL_FIXES:
             return None
-        moving.sort(key=lambda r: r[0])
         tracks = self._cluster_tracks(moving)
         picked = self._pick_ball_track(tracks, self.MIN_BALL_FIXES)
         if picked is None:
@@ -553,11 +737,51 @@ class IWR6843Source:
         tilt_r = math.radians(self.MOUNT_TILT_DEG)
         z_world = (ball_tr[:, 2] * math.sin(tilt_r)
                    + ball_tr[:, 3] * math.cos(tilt_r))
-        z_smooth = np.convolve(z_world, np.ones(3) / 3.0, mode="same")
-        k_min = int(np.argmin(z_smooth))
+        # Edge-pad before smoothing: convolve(mode="same") zero-pads, and
+        # a phantom 0 averaged into the FIRST sample reads lower than any
+        # real z whenever the track flies below ~2x the noise floor --
+        # argmin then pins to index 0, silently disabling this trim (and
+        # with it the directional gate's birth anchor). Latent since F-7;
+        # exposed the day the suffix scan started handing this code
+        # suffixes that begin mid-downswing (audit V-3).
+        zp = np.concatenate([z_world[:1], z_world, z_world[-1:]])
+        z_smooth = np.convolve(zp, np.ones(3) / 3.0, mode="valid")
+        # Search the kink only in the FIRST HALF of the suffix: the V is a
+        # head feature (descending club -> rising ball), and qualifying
+        # suffixes are ball-majority so impact sits early. A GLOBAL argmin
+        # is wrong for flat shots whose apex passes inside the window -- a
+        # 6-deg bump-and-run dips below launch height ~190 ms in, so its
+        # global z-minimum is the track END, and trimming there kept 4
+        # tail rows and produced confident garbage (audit V-3, sweep
+        # seeds 1/2/4).
+        k_min = int(np.argmin(z_smooth[:max(1, ball_tr.shape[0] // 2)]))
         if ball_tr.shape[0] - k_min >= self.MIN_BALL_FIXES:
             ball_st += k_min
             ball_tr = ball_tr[k_min:]
+        # DOPPLER-STEP birth trim (audit V-7), the flat-slow companion to
+        # the z-kink: on a bump-and-run the club's approach prepends
+        # seamlessly (range-monotonic, near-equal speed) and the z-kink
+        # drowns in elevation noise (a 6-deg launch climbs ~5 cm per
+        # 50 ms vs 6-9 cm of z noise) -- one hostile-sim seed blended
+        # them into a 40-deg "flop shot" at chip speed. But impact leaves
+        # a second signature: ball Doppler = smash x club Doppler (~1.5x
+        # step UP), clean whenever nothing folds. Only applied in the
+        # unfolded regime; folded regimes (driver/iron) have Doppler-HIGH
+        # prefixes that this cannot touch, and their large z-kinks are
+        # already handled above. Low rows are only searched in the first
+        # half: a mid-track junk row must not amputate good ball rows.
+        s_ser = ball_tr[:, 4]
+        # 90th percentile, not max: one wrong-hypothesis Doppler row (the
+        # SDK UG's own disambiguation caveat) must not disarm the test.
+        if float(np.percentile(s_ser, 90)) < 0.8 * self.v_max_ext:
+            tail_med = float(np.median(s_ser[len(s_ser) // 2:]))
+            low = (s_ser < 0.75 * tail_med)
+            low[len(s_ser) // 2:] = False
+            if low.any():
+                k_step = int(np.flatnonzero(low)[-1]) + 1
+                if ball_tr.shape[0] - k_step >= self.MIN_BALL_FIXES:
+                    ball_st += k_step
+                    ball_tr = ball_tr[k_step:]
         t, xyz, v_rad = ball_tr[:, 0], ball_tr[:, 1:4], ball_tr[:, 4]
         t_birth = float(t[0])
 
@@ -586,20 +810,71 @@ class IWR6843Source:
         # detection sometimes lands in the club's track one frame before
         # the suffix (born ON the clubhead), and for an iron its Doppler
         # (~ball speed) exceeds the club's -- rows whose Doppler matches
-        # the ball suffix's own median are excluded as stolen. (A driver's
-        # genuine impact rows survive that filter: its FOLDED ball Doppler
-        # ~40 m/s sits well below the club's true ~49 m/s peak.)
+        # the ball suffix's own median are excluded as stolen (both sides
+        # of that comparison are FOLDED values, so it survives aliasing:
+        # indoor driver ball folds to ~1.9 m/s vs club's folded ~26.7).
         ball_s_med = float(np.median(v_rad))
+        # The ball suffix's own mean range-rate: fold-proof motion
+        # signature used below to reject stolen ball rows by how they
+        # MOVE, not how they're labeled (audit V-7).
+        r_ball_sfx = np.linalg.norm(ball_tr[:, 1:4], axis=1)
+        ball_rate = float((r_ball_sfx[-1] - r_ball_sfx[0])
+                          / max(t[-1] - t_birth, 1e-6))
+        # Doppler match tolerance floored at 1.5 quantization bins: the
+        # demo reports Doppler on a 2*v_max_native/16 grid (= v_max_ext
+        # /16), so a fractional tolerance of a small folded median (a
+        # driver ball folds to ~2 m/s; 8% of that is a fifth of a bin)
+        # excluded nothing in practice -- one jittered ball row then
+        # became a 148 mph "clubhead" via its own ball-fast local slope.
+        s_tol = max(0.08 * ball_s_med, 1.5 * self.v_max_ext / 16.0)
         club_cands = []
         for tj, tr in enumerate(tracks):
+            # Per-row LOCAL range-rate of this track from its own
+            # positions -- the fold-proof speed reference (audit V-3):
+            # under 3-TX TDM a real driver head (~49 m/s at arc bottom)
+            # reads ~26.7 m/s folded, so the raw "fastest row" is garbage.
+            # Positions don't fold, but the slope must be LOCAL (+/-12 ms
+            # around each row): a clubhead accelerates ~e^(8t) into
+            # impact, so a 40 ms average reads less than half the
+            # arc-bottom speed and picks the wrong unfolding branch. A
+            # local fit is ~2-5 m/s accurate -- coarse, but the unfolding
+            # branches sit >=13 m/s apart wherever they're distinguishable
+            # (near v_max_ext they converge, and there picking either
+            # branch is numerically harmless).
+            t_tr = tr[:, 0]
+            r_tr = np.linalg.norm(tr[:, 1:4], axis=1)
+            pre_tr = t_tr < t_birth
             for ki in range(tr.shape[0]):
                 if tj == ball_ti and ki >= ball_st:
                     continue
                 if not (t_birth - 0.03 <= tr[ki, 0] < t_birth):
                     continue
-                if abs(tr[ki, 4] - ball_s_med) < 0.08 * ball_s_med:
+                if abs(tr[ki, 4] - ball_s_med) < s_tol:
                     continue                   # stolen ball detection
-                club_cands.append(tr[ki, 4])
+                near = pre_tr & (np.abs(t_tr - tr[ki, 0]) <= 0.012)
+                slope = None
+                if near.sum() >= 3:
+                    slope = abs(float(np.polyfit(t_tr[near],
+                                                 r_tr[near], 1)[0]))
+                # Motion-based stolen filter (audit V-7): a pre-birth row
+                # whose LOCAL range-rate matches the ball suffix's own
+                # rate IS the ball, however its Doppler label jittered --
+                # slopes come from positions and cannot fold or quantize
+                # away. (A real clubhead at arc bottom runs ~1/1.4 of
+                # ball speed -- comfortably outside the 15% band.)
+                if slope is not None and abs(slope - ball_rate) \
+                        < 0.15 * ball_rate:
+                    continue
+                cand = self._unfold(tr[ki, 4], slope)
+                # Physical ceiling (audit V-7): no human swings 150 mph
+                # (67 m/s). A junk row + noisy local slope occasionally
+                # unfolded onto an impossible branch and, because the
+                # resulting smash factor still landed inside the 0.9-1.8
+                # gate, published a 148 mph "clubhead" (+38 mph error in
+                # the hostile sim). Impossible candidates are dropped,
+                # not clamped -- a row that unfolds impossible is junk.
+                if cand <= 67.0:
+                    club_cands.append(cand)
 
         tilt_rad = math.radians(self.MOUNT_TILT_DEG)
         states, used = BallTracker(tilt_rad=tilt_rad).smooth(t_f, xyz_f)
@@ -613,10 +888,19 @@ class IWR6843Source:
         # t_birth, not the first fitted point, since reach-bubble gating
         # means fitting can start well after impact -- using gravity
         # decomposed into the sensor's own (tilted) y/z, the same physics
-        # the Kalman filter itself uses (see kalman.py).
+        # the Kalman filter itself uses (see kalman.py). Signs: gravity
+        # REMOVED vz over [t_birth, t_mid], so going BACK to launch adds
+        # it back (v_birth = v_mid - g_sensor*dt, and g_sensor is
+        # negative-down). An earlier revision applied gravity FORWARD
+        # here (+= -9.81*...), doubling the drop instead of undoing it --
+        # error grows with track length, so it silently ate ~2 m/s of vz
+        # on chip-length windows while staying invisible (~0.4 deg) on
+        # drivers. That sign bug was the dominant share of the documented
+        # "chip launch reads ~10 deg low" limitation and most of what
+        # E-8's clamp was actually clamping. Audit V-3 (2026-07-06).
         dt_launch = t_f[km] - t_birth
-        vel[1] += -9.81 * math.sin(tilt_rad) * dt_launch
-        vel[2] += -9.81 * math.cos(tilt_rad) * dt_launch
+        vel[1] += 9.81 * math.sin(tilt_rad) * dt_launch
+        vel[2] += 9.81 * math.cos(tilt_rad) * dt_launch
         # Rotate sensor-frame velocity into world (gravity-aligned) frame
         # before computing launch angle -- the sensor's own z axis is tilted
         # MOUNT_TILT_DEG off true vertical, so atan2 against raw sensor-z
@@ -639,8 +923,14 @@ class IWR6843Source:
         m = self.v_max_ext
         expected = float(vel @ los)                       # signed, sensor frame
         folded = abs((expected + m) % (2.0 * m) - m)      # what the radar reports
+        # Denominator floored at 10% of v_max_ext (audit V-3): under the
+        # 3-TX profile a fast ball's FOLDED Doppler can be ~2 m/s, and a
+        # purely relative error would let sub-m/s noise crater the
+        # confidence of exactly the best-measured shots. The floor keeps
+        # the comparison relative for ordinary Doppler magnitudes and
+        # absolute (in fold-space scale) near the fold zeros.
         agree = 1.0 - min(1.0, abs(folded - v_f[k0]) /
-                          max(v_f[k0], 1e-6))
+                          max(v_f[k0], 0.1 * m))
 
         # Physical floor (Johnny's rule): launch angle can never be < 0 --
         # the ball leaves the GROUND. A negative estimate is measurement

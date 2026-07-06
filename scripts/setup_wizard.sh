@@ -45,33 +45,32 @@ log()  { echo -e "${GREEN}[wizard]${NC} $1"; }
 warn() { echo -e "${YELLOW}[wizard]${NC} $1"; }
 error(){ echo -e "${RED}[wizard]${NC} $1"; }
 
-ask_yn() {
-    read -r -p "$1 [y/N] " reply
-    [[ "$reply" =~ ^[Yy]$ ]]
-}
-
 # ---- 0. Vendor openflight_upstream + apply our patch ---------------------
 
 log "Step 0: upstream OpenFlight checkout"
 PATCH="$REPO_ROOT/patches/simulate_custom_shot.patch"
 if [ -d "$UPSTREAM_DIR" ]; then
-    log "$UPSTREAM_DIR already present, leaving it as-is."
+    log "$UPSTREAM_DIR already present, leaving the checkout as-is."
 else
     log "Cloning $UPSTREAM_URL -> $UPSTREAM_DIR ..."
     git clone --depth 1 "$UPSTREAM_URL" "$UPSTREAM_DIR"
     log "Cloned."
-    # Re-apply our only upstream change (the simulate_custom_shot handler that
-    # shot_simulator.py --live needs). Purely additive; see the patch + README.
-    # Skipped automatically if upstream already carries an equivalent change.
-    if [ -f "$PATCH" ]; then
-        if git -C "$UPSTREAM_DIR" apply --check "$PATCH" 2>/dev/null; then
-            git -C "$UPSTREAM_DIR" apply "$PATCH"
-            log "Applied simulate_custom_shot.patch (enables shot_simulator.py --live)."
-        else
-            warn "simulate_custom_shot.patch didn't apply cleanly (upstream may have"
-            warn "moved on). --live may not work until it's re-applied by hand;"
-            warn "run_iwr6843.py and offline sims are unaffected."
-        fi
+fi
+# Re-apply our only upstream change (the simulate_custom_shot handler that
+# shot_simulator.py --live needs). Purely additive; see the patch + README.
+# Checked on EVERY run, not just fresh clones: the "safe to re-run" promise
+# has to cover a manually-cloned or interrupted checkout too, or --live
+# breaks silently later.
+if [ -f "$PATCH" ]; then
+    if git -C "$UPSTREAM_DIR" apply --reverse --check "$PATCH" 2>/dev/null; then
+        log "simulate_custom_shot.patch already applied."
+    elif git -C "$UPSTREAM_DIR" apply --check "$PATCH" 2>/dev/null; then
+        git -C "$UPSTREAM_DIR" apply "$PATCH"
+        log "Applied simulate_custom_shot.patch (enables shot_simulator.py --live)."
+    else
+        warn "simulate_custom_shot.patch neither applied nor appliable (upstream"
+        warn "may have moved on). --live may not work until it's re-applied by"
+        warn "hand; run_iwr6843.py and offline sims are unaffected."
     fi
 fi
 
@@ -187,6 +186,17 @@ elif [ ${#PORTS[@]} -ne 2 ]; then
     for i in "${!PORTS[@]}"; do echo "  [$i] ${PORTS[$i]}"; done
     read -r -p "Which index is the CLI port (115200 baud)? " cli_idx
     read -r -p "Which index is the DATA port (921600 baud)? " geom_idx
+    # Validate before indexing: a typo here would either crash the wizard
+    # (set -e + bad subscript) or silently write an empty port to
+    # hardware.env, which is exactly the misconfiguration this fallback
+    # exists to prevent.
+    if ! [[ "$cli_idx" =~ ^[0-9]+$ ]] || ! [[ "$geom_idx" =~ ^[0-9]+$ ]] ||
+            [ "$cli_idx" -ge ${#PORTS[@]} ] || [ "$geom_idx" -ge ${#PORTS[@]} ] ||
+            [ "$cli_idx" = "$geom_idx" ]; then
+        error "Invalid selection: need two DIFFERENT indices in 0-$(( ${#PORTS[@]} - 1 ))."
+        error "Re-run the wizard and try again."
+        exit 1
+    fi
     CLI_PORT="${PORTS[$cli_idx]}"
     GEOM_PORT="${PORTS[$geom_idx]}"
 else
@@ -290,6 +300,20 @@ if [ -n "$CARD_INDEX" ]; then
             --card "$CARD_INDEX" --control "$GAIN_CONTROL" 2>&1 || \
             warn "Could not set gain -- verify control name/card by hand."
     fi
+    # Persist the mixer state NOW: ALSA only restores what alsa-restore
+    # saved at the last CLEAN shutdown -- a power-yanked Pi boots with
+    # driver defaults, and a reverted input mux is the exact "silent
+    # capture that looks like a dead radar" trap from audit D-6.
+    # (Belt and braces: run_iwr6843.py also re-asserts the routing from
+    # hardware.env at every startup.)
+    if command -v alsactl >/dev/null 2>&1; then
+        if sudo alsactl store 2>/dev/null; then
+            log "Mixer state stored (alsactl) -- survives hard power cuts."
+        else
+            warn "alsactl store failed -- mixer settings may not survive a"
+            warn "power cut (run_iwr6843.py re-asserts them at startup anyway)."
+        fi
+    fi
 else
     warn "Skipped -- set gain later with: python -m openflight_iwr6843.gain"
 fi
@@ -310,10 +334,13 @@ cat > "$ENV_FILE" <<EOF
 CLI_PORT=$CLI_PORT
 GEOM_PORT=$GEOM_PORT
 AUDIO_DEVICE=$AUDIO_DEVICE
-# For reference only (gain.py takes --card/--control explicitly, doesn't
-# read this file yet):
-# HIFIBERRY_CARD=$CARD_INDEX
-# GAIN_CONTROL=$GAIN_CONTROL
+# HiFiBerry ALSA card/gain: run_iwr6843.py re-asserts the ADC input mux,
+# mic-bias-off, and (if GAIN_DB is set) capture gain on this card at every
+# startup, so a power-yanked Pi can't boot into the wrong-mux/silent-capture
+# state (audit D-6).
+HIFIBERRY_CARD=$CARD_INDEX
+GAIN_CONTROL=$GAIN_CONTROL
+GAIN_DB=$GAIN_DB
 EOF
 log "Wrote $ENV_FILE"
 
@@ -322,5 +349,16 @@ if [ "$NEED_REBOOT" -eq 1 ]; then
     warn "REBOOT (or at least log out/in) before running run_iwr6843.py --"
     warn "the HiFiBerry overlay and/or dialout group change needs a fresh session."
 fi
+echo
+log "Hardware checklist -- things software CANNOT check (docs/kmc1-harness.md):"
+log "  [ ] K-MC1 Pin 1 (/Enable) hardwired to GND. Internal 10k PULLUP:"
+log "      a floating pin = radar silently OFF, no error anywhere."
+log "  [ ] HiFiBerry mic-bias JUMPERS left open (the 'ADC Mic Bias off'"
+log "      mixer control above is only the software half)."
+log "  [ ] K-MC1 rotated so its 25-deg beam axis is VERTICAL (audit D-8 --"
+log "      wrong rotation clips high wedge launches)."
+log "  [ ] IWR6843 SOP switches back at functional mode 001 (S1.1 OFF) and"
+log "      S1.5 OFF after flashing -- see docs/firmware-flashing.md."
+echo
 log "Next: bring-up ladder in openflight_iwr6843/README.md -- TI Demo"
 log "Visualizer sanity check first, THEN run_iwr6843.py."
