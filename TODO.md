@@ -206,6 +206,20 @@ Running list of open items. Newest relevant item first per section.
 
 ## Software
 
+- [ ] **Auto-start OpenFlight on Pi boot**: run_iwr6843.py should come up
+      by itself when the Pi powers on (walk up, swing, no SSH). Likely a
+      systemd unit installed by a new setup_wizard.sh step: After=
+      network.target + sound.target, WorkingDirectory=repo root, exec the
+      venv python with args from hardware.env, Restart=on-failure (pairs
+      with the S-1 dead-UART loud-exit and the D-6 ADC re-assert, which
+      was designed for exactly this power-cut-then-reboot path). Upstream's
+      scripts/start-kiosk.sh is prior art but launches a desktop kiosk
+      browser; ours is headless -- the UI is served by the same process
+      and viewed from a phone. Decide at build time whether the unit also
+      wants a --speed-training default or always starts in indoor play
+      mode (mode is live-switchable from the web UI either way). Needs the
+      real Pi to test enable/ordering/permissions -- hardware-gated.
+
 - [x] **Speed-training mode + live 3-way mode switching (2026-07-06,
       Johnny's request)**: club-head-speed-only mode for ball-less
       overspeed training, riding the EXACT same stream as shots
