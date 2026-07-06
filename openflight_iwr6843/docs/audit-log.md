@@ -14,6 +14,67 @@ Primary sources live at `~/Desktop/datasheets/` — see
 
 ---
 
+## Audit #7 — 2026-07-06 (speed-training / mode-switch surface, hostile-dirt audit)
+
+Johnny's brief: "full audit and sanity check with dirt" on the previous
+day's feature commit (de3572f: speed-training mode, live 3-way mode
+switching, reorderable UI grid). Method: fresh-eyes code reading of the
+whole shipped diff (LM-2 side + `patches/session_mode.patch`), then
+adversarial execution at every stage — hostile-sim captures the feature
+was never tested against (balls in speed mode, slow practice swings),
+the run() loop driven end-to-end over fake serial ports with synthesized
+TLV byte streams and mid-stream switch requests, and a live SocketIO
+re-press of the whole control surface including the S-2 posture.
+Findings `M-n`; **all closed same-day**.
+
+| ID | Sev | Finding | Resolution |
+|----|-----|---------|------------|
+| M-1 | **HIGH — FIXED** | **A real ball hit in speed-training mode published as a fake swing.** Speed training is ball-less by definition, but users forget which mode they're in — and a ball is faster than the club that struck it, so the ball won `analyze_swing()`'s peak search: a 120 mph 7-iron ball published as a **116.4 mph "swing"** (+31 over the real 85 mph club — exactly the session-max corruption overspeed training can't tolerate), and one hostile chip seed unfolded an 18 mph ball to an **84.7 mph swing**. A rep with a ball in it isn't a training swing at all (different mechanics), and salvaging the club number instead proved unreliable (impact merge eats the pre-birth rows precisely then; salvaged reads scattered to 37 mph) — so the fix REJECTS the capture outright: `_pick_ball_track` (F-7's own ballistic-suffix judge) runs first, and any ball-bearing capture is ignored with a loud console line telling the user to switch modes. It archives like every trigger. Proven over the full hostile matrix (4 ball scenarios × 20 seeds = 80 captures): **0 leaks**, bare-swing envelope unchanged. Now a standing simulator assertion (run + sweep). |
+| M-1b | **MED — FIXED** | **Fragmented-ball leftovers could still fake a fast swing.** When a chip ball fragments below `_pick_ball_track`'s floor (the known 1-in-20 V-7 chip case), its junk rows unfold to the fold shoulder and mutually "support" an 84.7 mph swing on a track whose real motion is chip-slow. Gross-rate sanity added after peak selection: the winning track's actual range motion (±20 ms window) must be ≥0.45× the claimed peak — at arc bottom the head's motion is fully radial, so a real peak always is. Rejection only on POSITIVE evidence (window evaluable and rate far under claim), so sparse burst-gap seeds aren't false-rejected. |
+| M-2 | **MED — FIXED (real-phone confirmation still pending)** | **Hold-to-drag would lose to page scroll on real touchscreens.** Browsers latch `touch-action` at GESTURE START; the grid only flipped its `touch-action: none` class after the 280 ms hold fired, so the first finger movement would hand the gesture to the scroller and fire `pointercancel` — desktop pointer simulation can't reproduce this. Fix: a native non-passive `touchmove` listener on the grid that `preventDefault()`s only while a drag is active (no scroll has begun during a stationary hold, so first-move prevention keeps the gesture). React attaches touch handlers passively, hence the manual `addEventListener`. Code-level fix; one minute on an actual phone remains the confirmation. |
+| M-3 | **HIGH — FIXED (play-mode finding surfaced by the swing work)** | **Slow practice swings published phantom SHOTS through `analyze()`.** V-7's "0/20 phantoms" was measured at 105 mph practice swings only, and its suffix fences (0.04 s span, 0.5 fill, covariance-scaled accel/anti-gravity) were implicitly sized there. A slower swing lingers longer at arc bottom — where its range-rate is genuinely ball-flat — and the hostile sim published an 80 mph swing as a **67.3 mph shot (launch 0.0°, conf 0.58)** and a 70 mph swing as **63.0 mph at conf 0.87**. Two fixes, each ablation-diagnosed against the offending suffixes: (1) **rate-consistency gate** in `_pick_ball_track` — a free ball's range-rate is near-constant (drag ~2%, LOS geometry partially cancels it) while a swing arc must accelerate into the bottom (~e^{8t}, measured +26%) or decay off it (~e^{-6t}, measured 31→21 m/s); least-squares slope of r(t) over the FIRST vs LAST THIRD (halves diluted the signal), reject when the larger side ≥12 m/s and >1.25× the smaller +2 m/s (thirds σ≈2-3 m/s; real drives sit ~8σ inside). Activation keys on the LARGER side because follow-throughs decay right through any absolute floor. (2) **fill floor 0.5 → 0.6**: the dirt model's own worst case (one max 8-frame burst gap in the shortest real suffix) leaves a real ball ≥0.65, while the one bottom-straddling sweep whose rate profile is genuinely flat measured EXACTLY 0.50 and rode the boundary. Proven: **wide scan 70–125 mph × 20 seeds = 140 bare swings through `analyze()`: 0 phantoms**; real-shot misses unchanged (1/20 chip fragmentation, bit-identical to HEAD — checked by running the committed code side-by-side); all scenario envelopes unchanged. `practice_swing_80` added as a standing scenario. |
+| M-4 | **MED — FIXED** | **`_parse()` dropped legitimately-EMPTY frames, starving the mode-switch check.** The demo emits frames with `numDetectedObj=0` and no points TLV whenever the scene is quiet — normal output, not corruption — but `_parse` returned None for them, so `run()`'s per-frame pending-switch check could wait UNBOUNDED in an empty range (outdoor, strict CFAR) before applying a switch the user already requested; the pre-roll's aging clock starved too. Found when the execution test's quiet phases never advanced the loop. Fix: `num_obj == 0` frames now yield an empty `Frame` (trigger logic already handles zero-point frames — the simulator has always fed them); corrupt frames (claimed objects, unparseable TLV) still drop for resync. Execution-proven: an outdoor switch now applies on a completely empty scene. |
+| M-5 | **LOW — FIXED** | `_pick_ball_track`'s docstring claimed it returns `(track_index, start_index)`; it actually returns `(range_gain, track_index, start_index)` — bit the audit itself (unpack crash). Docstring corrected. |
+| M-6 | **LOW — FIXED** | Swings-only sessions rendered StatsView's play block as "All (0)" club tabs over zeroed ball aggregates. Play block now renders only when play shots exist; the swing summary stands alone. |
+
+**Execution/wire coverage added by this audit** (beyond the findings):
+the full mode-switch machinery ran end-to-end for the first time —
+`run()` over fake serial ports fed synthesized TLV byte streams:
+boot cfg stream, mid-stream switch to speed (applied between captures,
+full re-stream with speed-session lines verified line-by-line), a
+hostile swing capture publishing 105.8 mph (true 105) through
+`on_geometry`, a coalesced rapid double-switch (outdoor request
+overwritten by indoor before applying — single pending slot, last wins),
+a driver capture then publishing 163.5 mph / 11.1° (true 165/13) through
+`analyze()`, and a second run proving the outdoor chirp-file swap
+(10 m gate, 3 ms frame period, v_max_ext 27.8 re-derived) applies on an
+EMPTY scene. Live SocketIO re-press: **S-2 holds with the new ingress
+present** (`simulate_shot`/`simulate_custom_shot` inert in hardware
+posture), 12 rapid mode switches processed in order with correct final
+broadcast, junk/malformed/absent payloads produce errors not crashes,
+unsupported-monitor posture reports cleanly, and mixed sessions
+(shots + swings) serialize `mode` tags on reconnect without fabricating
+smash factors from ball_speed 0.
+
+**Verified-good, no change needed:** `estimate_launch_angle` is safe at
+ball_speed 0 (guards its divisions; the live wire test pushed a swing
+through the full `on_shot_detected` path); `handle_get_session`
+serializes via the patched `shot_to_dict` so reconnecting clients get
+swing tags; the wizard's patch loop is nullglob-safe and idempotent
+(reverse-check → apply → warn); both patches apply to pristine upstream
+in either order and the patched tree builds (tsc + vite) and compiles;
+fuser swing branch consults neither audio nor spin (E-9 trivially
+preserved); GSPro never sees swings; `from_selector` whitelisting makes
+the SocketIO ingress control-plane-only.
+
+**Standing limits touched by this audit:** the fold-shoulder ambiguity
+band (`speed_fold_ambiguous`, ±10 mph self-flagged) is unchanged — the
+M-1b gross-rate gate rejects junk-supported shoulder peaks but cannot
+resolve genuine in-band ambiguity (same physics as before). Real-phone
+drag feel (M-2) and everything hardware-gated remain bench items.
+
+---
+
 ## Audit #6 — 2026-07-05/06 (chip-configuration audit vs the Demo Visualizer + SDK User Guide)
 
 Johnny's brief: the Demo Visualizer screenshots (in

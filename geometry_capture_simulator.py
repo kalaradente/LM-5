@@ -35,6 +35,10 @@ Scenarios (all assertions must pass; exit code 1 otherwise):
     bump_and_run    20 mph ball at 6 deg — flat AND slow, the geometric
                     worst case; exercises the launch>=0 physical floor and
                     its confidence penalty on every noise seed
+    practice_swing_80  slow club only, NO ball -> None (audit M-3: slow
+                    swings linger at arc bottom where range-rate is
+                    ball-flat; the rate-consistency gate + fill floor
+                    own this regime)
     practice_swing  club only, NO ball -> analyze() must return None (the
                     old code could fabricate a phantom shot from club points)
 
@@ -333,6 +337,12 @@ SCENARIOS = [
     # global minimum, audit V-3).
     ("bump_and_run",     20.0,     18.0,     6.0,   0.0,  "floor"),
     ("practice_swing",   None,    105.0,     0.0,   0.0,  "none"),
+    # Slow practice swing (audit M-3): a slower swing lingers longer at
+    # arc bottom, where its range-rate is genuinely ball-flat -- the V-7
+    # fences were sized at 105 mph and 80/70 mph swings slipped phantom
+    # "shots" through analyze() (67 mph @ conf 0.58, 63 mph @ 0.87) until
+    # the rate-consistency gate + 0.6 fill floor landed.
+    ("practice_swing_80", None,     80.0,     0.0,   0.0,  "none"),
 ]
 
 
@@ -460,6 +470,16 @@ def speed_training_run(verbose: bool = False) -> bool:
     ok_all &= ok
     print(f"{'10 (waggle)':>15} {'—':>10}  "
           f"{'PASS (no phantom swing)' if ok else 'FAIL: published ' + str(g)}")
+    # Ball strike in speed mode (audit M-1): NOT a rep -- must be rejected,
+    # never published as a swing (a 120 mph ball once became a 116 mph
+    # "swing"; a fragmented 18 mph chip once unfolded to 84.7).
+    for bname, ball, club, launch in [("iron ball", 120.0, 85.0, 19.0),
+                                      ("chip ball", 18.0, 16.0, 22.0)]:
+        g = src.analyze_swing(synth_capture(ball, club, launch, 0.0))
+        ok = g is None
+        ok_all &= ok
+        print(f"{bname:>15} {'—':>10}  "
+              f"{'PASS (rep ignored)' if ok else 'FAIL: published ' + str(g)}")
     return ok_all
 
 
@@ -507,8 +527,15 @@ def sweep(n_seeds: int = 6) -> bool:
                                            seed=seed)) is not None:
             fails += 1
             print(f"  FAIL seed {seed}: waggle published as swing")
+        # Ball strikes in speed mode rejected on every seed (audit M-1).
+        for ball, club, launch in [(120.0, 85.0, 19.0), (18.0, 16.0, 22.0)]:
+            if src.analyze_swing(synth_capture(ball, club, launch, 0.0,
+                                               seed=seed)) is not None:
+                fails += 1
+                print(f"  FAIL seed {seed}: ball ({ball} mph) published "
+                      f"as swing")
     print(f"[sweep] {n_seeds} seeds x {len(SCENARIOS)} scenarios "
-          f"+ {len(SWING_SPEEDS) + 1} swing checks: {fails} failures")
+          f"+ {len(SWING_SPEEDS) + 3} swing checks: {fails} failures")
     return fails == 0
 
 

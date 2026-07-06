@@ -355,6 +355,18 @@ class IWR6843Source:
                 snr = si[:, 0].astype(np.float64)
             offset += 8 + tlv_len
         if points is None:
+            # Distinguish EMPTY from CORRUPT (audit M-4): the demo emits
+            # frames with numDetectedObj=0 and no points TLV whenever the
+            # scene is quiet -- that's normal output, not damage. Dropping
+            # them silently starved everything keyed to frame arrival: the
+            # pre-roll's clock, and above all run()'s pending mode-switch
+            # check, which in an empty range (outdoor, strict CFAR) would
+            # wait UNBOUNDED for the next detection before applying a
+            # switch the user already requested. Corrupt frames (claimed
+            # objects but no parseable TLV) still drop to resync.
+            if num_obj == 0:
+                return Frame(time.monotonic(), np.zeros((0, 4)), None,
+                             num=int(hdr[3]))
             return None
         r = np.linalg.norm(points[:, :3], axis=1)
         keep = (r > self.range_gate[0]) & (r < self.range_gate[1])
@@ -577,7 +589,7 @@ class IWR6843Source:
 
     def _pick_ball_track(self, tracks: list, min_fixes: int):
         """Find the best BALLISTIC SUFFIX across all tracks; returns
-        (track_index, start_index) or None.
+        (range_gain, track_index, start_index) or None.
 
         Suffixes, not whole tracks, because of impact handoff: at impact
         the ball is born ON the clubhead, so the club's track can seamlessly
@@ -664,15 +676,23 @@ class IWR6843Source:
                 span = float(t[-1] - t[0])
                 if span < 0.04 or gain / span > 105.0:
                     continue
-                # FILL RATIO (audit V-7): a ball inside the gate is a
-                # strong coherent reflector -- the chip detects it nearly
-                # every frame. The club's top-of-finish tail (7 sparse
-                # rows across 88 ms of flickering glints, rising range,
-                # arc-top accel too slow to trip the ballistic test)
-                # passed everything else and published an 83 mph phantom
-                # on a practice swing. Sparse candidates are glints or
-                # false-alarm chains, never the ball.
-                if len(r) / (span / self.frame_period + 1.0) < 0.5:
+                # FILL RATIO (audit V-7, floor raised in M-3): a ball
+                # inside the gate is a strong coherent reflector -- the
+                # chip detects it nearly every frame. The club's
+                # top-of-finish tail (7 sparse rows across 88 ms of
+                # flickering glints, rising range, arc-top accel too slow
+                # to trip the ballistic test) passed everything else and
+                # published an 83 mph phantom on a practice swing. Sparse
+                # candidates are glints or false-alarm chains, never the
+                # ball. Floor is 0.6 because the dirt model's own worst
+                # case -- one maximum burst gap (8 frames) inside the
+                # shortest real suffix (~20 frames) -- still leaves a real
+                # ball at ~0.65, while an 80 mph practice swing's gappy
+                # arc-bottom sweep measured EXACTLY 0.50 and rode the old
+                # boundary through every kinematic gate (its range-rate is
+                # genuinely ball-flat across the bottom; fill is the only
+                # fence left).
+                if len(r) / (span / self.frame_period + 1.0) < 0.6:
                     continue
                 lag = max(1, len(r) // 8)
                 diffs = r[lag:] - r[:-lag]
@@ -715,6 +735,40 @@ class IWR6843Source:
                 az_world = acc[1] * sin_t + acc[2] * cos_t
                 if az_world > max(25.0, 4.0 * math.sqrt(var_a / 3.0)):
                     continue
+                # RATE-CONSISTENCY GATE (audit M-3): a free ball's range-
+                # rate is nearly constant across the window -- drag bleeds
+                # ~2% and LOS-alignment geometry partially cancels it (the
+                # V-6 dragged-ball study) -- while a swing arc CANNOT hold
+                # its radial rate: the downswing approach accelerates
+                # (~e^{8t}) and the follow-through decays (~e^{-6t}), both
+                # >=20% across a 40+ ms suffix. The V-7 fences (span/fill/
+                # accel) were sized against a 105 mph practice swing; an
+                # 80 mph swing lingers longer at arc bottom and 1-in-80
+                # hostile seeds slipped its APPROACH through every gate as
+                # a 67 mph phantom "ball" (launch 0.0, conf 0.58, measured
+                # half-slopes 26.6 -> 33.6 m/s = +26%). Least-squares
+                # slope of r(t) per half; active only where the test has
+                # teeth: >= 8 rows and both halves >= 12 m/s (sigma_slope
+                # ~1.5 m/s makes the ratio noise ~2-3 sigma inside 20% for
+                # real drives; slow chips sit below the gate and are
+                # drag-free anyway).
+                if len(r) >= 9:
+                    th = len(r) // 3
+                    sl1 = abs(float(np.polyfit(t[:th + 1], r[:th + 1],
+                                               1)[0]))
+                    sl2 = abs(float(np.polyfit(t[2 * th:], r[2 * th:],
+                                               1)[0]))
+                    lo, hi = min(sl1, sl2), max(sl1, sl2)
+                    # First third vs last third (not halves: half-averaging
+                    # diluted a measured 31 -> 21 m/s follow-through decay
+                    # into 28 vs 23 and let a 70 mph practice swing publish
+                    # at conf 0.87). Activation keys on the LARGER side --
+                    # a follow-through decays right through any absolute
+                    # floor -- and the +2.0 m/s term absorbs slope noise
+                    # (sigma ~2-3 m/s per third) so real drives (~2% drag
+                    # decay) sit far inside the rail.
+                    if hi >= 12.0 and hi > 1.25 * lo + 2.0:
+                        continue
                 best = (gain, ti, st)
         return best
 
@@ -1083,8 +1137,25 @@ class IWR6843Source:
         t0, rows = self._capture_rows(capture)
         if len(rows) < self.MIN_BALL_FIXES:
             return None
-        cands = []                     # (speed m/s, t_row, track_idx)
         tracks = self._cluster_tracks(rows)
+        # Speed training is ball-less BY DEFINITION, but users forget which
+        # mode they're in and hit real balls -- and a ball is faster than
+        # the club that struck it, so without this gate the BALL wins the
+        # peak search and publishes as an impossible "swing" (measured:
+        # a 120 mph 7-iron ball became a 116 mph swing; one chip seed
+        # unfolded to an 84.7 mph swing off an 18 mph ball, audit M-1). A
+        # ball strike is NOT a training rep -- different mechanics, and
+        # its pre-birth club rows are exactly the ones impact merge eats,
+        # so a salvaged club number scattered down to 37 mph in the
+        # hostile sim. Reject the capture outright and say why; it's
+        # archived like every trigger, and the fix for the user is one
+        # tap on the mode picker.
+        if self._pick_ball_track(tracks, self.MIN_BALL_FIXES) is not None:
+            print("[iwr6843] ball flight detected in speed-training mode "
+                  "-> rep ignored (speed training is ball-less; switch to "
+                  "indoor/outdoor mode to measure shots)")
+            return None
+        cands = []                     # (speed m/s, t_row, track_idx)
         for tj, tr in enumerate(tracks):
             if tr.shape[0] < 5:
                 continue               # flicker / false-alarm fragments
@@ -1131,7 +1202,27 @@ class IWR6843Source:
         c_pk, t_pk, tj = peak
         tr = tracks[tj]
         t_tr = tr[:, 0]
-        raws = tr[np.abs(t_tr - t_pk) <= 0.020, 4]
+        near_pk = np.abs(t_tr - t_pk) <= 0.020
+        # GROSS-RATE SANITY (audit M-1b): the winning track's actual range
+        # motion around the claimed peak must roughly match the claim -- at
+        # arc bottom the head's motion is fully radial, so a real peak sits
+        # near the track's own gross dr/dt (>=0.9x within noise). When a
+        # ball fragments below _pick_ball_track's floor (the known 1-in-20
+        # chip case), leftover junk rows can unfold to the fold shoulder
+        # and mutually "support" an 84.7 mph swing on a track whose real
+        # motion is chip-slow -- gross rate ~8 m/s against a 37.9 claim.
+        # Reject only on POSITIVE evidence of mismatch (window evaluable
+        # and rate far under the claim); sparse windows keep the swing, so
+        # burst-gap seeds aren't false-rejected.
+        w_t, w_r = t_tr[near_pk], np.linalg.norm(tr[near_pk][:, 1:4], axis=1)
+        if w_t.size >= 3 and (w_t.max() - w_t.min()) >= 0.006:
+            gross = (w_r.max() - w_r.min()) / (w_t.max() - w_t.min())
+            if gross < 0.45 * c_pk:
+                print(f"[iwr6843] swing peak {c_pk * MPS_TO_MPH:.0f} mph "
+                      f"inconsistent with its track's range motion "
+                      f"({gross * MPS_TO_MPH:.0f} mph) -> rejected")
+                return None
+        raws = tr[near_pk, 4]
         # Slack of 0.10*v_max_ext on both tests: covers Doppler-bin
         # quantization pushing the observed shoulder below v_max_ext
         # (measured 0.937*v_max_ext in the hostile sim) without reaching

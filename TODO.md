@@ -242,9 +242,17 @@ Running list of open items. Newest relevant item first per section.
       (valid/junk/malformed modes, unsupported-monitor posture, swing
       riding the real shot stream); tsc + eslint clean. S-2 posture holds:
       the new ingress is control-plane only, whitelisted by from_selector.
+      AUDITED 2026-07-06 (audit #7, M-series, all findings closed — see
+      audit-log.md): M-1 ball-strike-in-speed-mode now rejected as a rep,
+      M-3 slow-practice-swing phantom shots killed in play mode too
+      (rate-consistency gate + 0.6 fill floor, 0/140 wide scan), M-4
+      empty frames keep switches applying in quiet scenes, M-2 native
+      touchmove guard for hold-to-drag, plus end-to-end execution proof
+      of the switch machinery over synthesized TLV wires.
       BENCH (rung 5): confirm the fold-shoulder ambiguity band against a
-      real swing at known speed; radar-vs-real-clock latency of the mode
-      switch is a nicety, not a correctness item.
+      real swing at known speed; one minute of real-phone drag (M-2
+      confirmation); radar-vs-real-clock latency of the mode switch is a
+      nicety, not a correctness item.
 
 - [x] **Physical invariant: launch angle >= 0** (2026-07-05, Johnny's
       rule — E-8 in audit-log.md): analyze() clamps negative launch fits

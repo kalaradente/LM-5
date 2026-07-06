@@ -190,11 +190,11 @@ index 0000000..642da27
 +}
 diff --git a/ui/src/components/ReorderableGrid.tsx b/ui/src/components/ReorderableGrid.tsx
 new file mode 100644
-index 0000000..bca67e9
+index 0000000..be9bcac
 --- /dev/null
 +++ b/ui/src/components/ReorderableGrid.tsx
-@@ -0,0 +1,159 @@
-+import { useRef, useState } from 'react';
+@@ -0,0 +1,184 @@
++import { useEffect, useRef, useState } from 'react';
 +import './ReorderableGrid.css';
 +
 +function loadOrder(storageKey: string): string[] {
@@ -239,6 +239,28 @@ index 0000000..bca67e9
 +  const [draggingId, setDraggingId] = useState<string | null>(null);
 +  const holdTimer = useRef<number | null>(null);
 +  const startPt = useRef<{ x: number; y: number } | null>(null);
++  const gridRef = useRef<HTMLDivElement | null>(null);
++  // Mirror of draggingId for the native listener below; kept in sync at
++  // the exact points draggingId changes (hold-fire and drag-end), because
++  // the listener is bound once and must not read stale state.
++  const draggingRef = useRef<string | null>(null);
++
++  // Native non-passive touchmove guard (audit M-2): browsers latch
++  // touch-action at GESTURE START, so flipping the CSS class after the
++  // hold fires cannot stop the pan — the first finger movement would
++  // hijack the drag into a page scroll and fire pointercancel. Since no
++  // scroll has begun while the finger held still, preventDefault on the
++  // first post-hold touchmove reliably keeps the gesture ours. React
++  // attaches touch listeners passively, hence the manual addEventListener.
++  useEffect(() => {
++    const el = gridRef.current;
++    if (!el) return;
++    const onTouchMove = (ev: TouchEvent) => {
++      if (draggingRef.current) ev.preventDefault();
++    };
++    el.addEventListener('touchmove', onTouchMove, { passive: false });
++    return () => el.removeEventListener('touchmove', onTouchMove);
++  }, []);
 +
 +  // Reconcile persisted order with the items actually present this render:
 +  // saved order first (dropping any that disappeared), then any new ids in
@@ -286,6 +308,7 @@ index 0000000..bca67e9
 +      // Freeze the current visible order into state so live reordering has
 +      // a stable base, then lift this card.
 +      setOrder(currentIds());
++      draggingRef.current = id;
 +      setDraggingId(id);
 +      try {
 +        cell.setPointerCapture(pid);
@@ -326,6 +349,7 @@ index 0000000..bca67e9
 +    clearHold();
 +    if (draggingId) {
 +      persist(currentIds());
++      draggingRef.current = null;
 +      setDraggingId(null);
 +    }
 +    startPt.current = null;
@@ -333,6 +357,7 @@ index 0000000..bca67e9
 +
 +  return (
 +    <div
++      ref={gridRef}
 +      className={`reorder-grid ${draggingId ? 'reorder-grid--dragging' : ''}`}
 +      onPointerMove={onPointerMove}
 +      onPointerUp={endDrag}
@@ -830,7 +855,7 @@ index 8bdd1fa..e2dd911 100644
        </span>
      </div>
 diff --git a/ui/src/components/StatsView.tsx b/ui/src/components/StatsView.tsx
-index 85abaec..c103ab7 100644
+index 85abaec..e1d3ce6 100644
 --- a/ui/src/components/StatsView.tsx
 +++ b/ui/src/components/StatsView.tsx
 @@ -16,20 +16,32 @@ export function StatsView({ shots, onClearSession }: StatsViewProps) {
@@ -872,7 +897,7 @@ index 85abaec..c103ab7 100644
  
    const stats = useMemo(() => computeStats(filteredShots), [filteredShots]);
  
-@@ -43,12 +55,32 @@ export function StatsView({ shots, onClearSession }: StatsViewProps) {
+@@ -43,12 +55,37 @@ export function StatsView({ shots, onClearSession }: StatsViewProps) {
  
    return (
      <div className="stats-view">
@@ -896,6 +921,11 @@ index 85abaec..c103ab7 100644
 +          </div>
 +        </div>
 +      )}
++      {/* Play-shot tabs + ball stats only when play shots exist — a
++          swings-only session would otherwise render "All (0)" tabs over a
++          grid of zeroed ball aggregates. */}
++      {playShots.length > 0 && (
++      <>
        <div className="club-tabs">
          <button
            className={`club-tabs__tab ${selectedClub === null ? 'club-tabs__tab--active' : ''}`}
@@ -906,6 +936,15 @@ index 85abaec..c103ab7 100644
          </button>
          {availableClubs.map((club) => (
            <button
+@@ -91,6 +128,8 @@ export function StatsView({ shots, onClearSession }: StatsViewProps) {
+           </div>
+         )}
+       </div>
++      </>
++      )}
+ 
+       <button className="clear-button" onClick={onClearSession}>
+         Clear Session
 diff --git a/ui/src/components/SwingDisplay.tsx b/ui/src/components/SwingDisplay.tsx
 new file mode 100644
 index 0000000..65d83c8

@@ -1,6 +1,6 @@
 # LM-2 — Session Handoff / State of Affairs
 
-_Written 2026-07-04, last updated 2026-07-06 (after audits #1-#6). Read
+_Written 2026-07-04, last updated 2026-07-06 (after audits #1-#7). Read
 this first, then `openflight_iwr6843/docs/audit-log.md` (the running audit
 record — REQUIRED reading before assuming anything about open issues),
 `TODO.md`, and `openflight_iwr6843/README.md`. Auto-memory also carries
@@ -107,7 +107,7 @@ patch. On a dev machine, symlink it for testing:
 | `openflight_iwr6843/docs/mounting.md` | Physical sensor mounting decision + rationale (side-by-side, one rigid plate, ~2m/height≈ball-height/10° tilt) and confirmed K-MC1/IWR6843ISK physical specs. |
 | `openflight_iwr6843/docs/mounting-plate.svg` | Top-view + side-view diagram of the mounting plate. |
 | `openflight_iwr6843/docs/datasheets-manifest.md` | Catalog of all primary datasheets at `~/Desktop/datasheets/` (external, git-ignored) and what's been confirmed from each. |
-| `openflight_iwr6843/docs/audit-log.md` | **Running audit log — REQUIRED reading.** Six audits: #1 F-series (code reading), #2 D-series (datasheets), #3 E-series (every-button execution), #4 FAILED (interrupted), #5 S-series (synthesized real stimuli: TLV byte streams, painted audio ring, live TCP/SocketIO wires), #6 V-series (chip config vs Demo Visualizer + SDK User Guide — caught the missing-elevation-TX config, seven missing mandatory CLI commands, and a gravity sign bug that had been masquerading as a sensor limitation). ALL findings closed as of 2026-07-06. Johnny's rules are enforced invariants (E-8 launch≥0, E-9 spin-window guard, F-7 directional gate, V-3 anti-gravity gate). Known measurement limits documented in the log, not hidden. See HANDOFF §7 for the standing-state summary. |
+| `openflight_iwr6843/docs/audit-log.md` | **Running audit log — REQUIRED reading.** Seven audits: #1 F-series (code reading), #2 D-series (datasheets), #3 E-series (every-button execution), #4 FAILED (interrupted), #5 S-series (synthesized real stimuli: TLV byte streams, painted audio ring, live TCP/SocketIO wires), #6 V-series (chip config vs Demo Visualizer + SDK User Guide — caught the missing-elevation-TX config, seven missing mandatory CLI commands, and a gravity sign bug that had been masquerading as a sensor limitation), #7 M-series (speed-training/mode-switch surface with dirt — caught balls-in-speed-mode publishing as fake swings, slow practice swings publishing phantom SHOTS through analyze(), the empty-frame drop that could stall mode switches indefinitely, and the touch-drag/scroll latch). ALL findings closed as of 2026-07-06. Johnny's rules are enforced invariants (E-8 launch≥0, E-9 spin-window guard, F-7 directional gate, V-3 anti-gravity gate, M-1 ball-in-speed-mode rejection). Known measurement limits documented in the log, not hidden. See HANDOFF §7 for the standing-state summary. |
 
 ---
 
@@ -260,6 +260,15 @@ Highlights a fresh session should know:
   (~84 mph arc-bottom radial indoors) are ±10 mph fold-ambiguous
   (`speed_fold_ambiguous`); everywhere else ≤6 mph, ~2 typical (20-seed
   hostile envelope). See TODO's Software entry + README "Session modes".
+  **Audited same day (audit #7, M-series, all closed)**: ball strikes in
+  speed mode are now rejected as reps (M-1, was publishing a 120 mph ball
+  as a 116 mph "swing"); slow practice swings no longer publish phantom
+  shots through analyze() in ANY mode (M-3: rate-consistency gate + 0.6
+  fill floor — 0 phantoms across 140 hostile bare swings, 70–125 mph);
+  empty frames now keep the switch check alive in quiet scenes (M-4); the
+  mode-switch machinery is execution-proven end to end over synthesized
+  TLV wires (swing and shot published across live switches, cfg
+  re-streams line-verified, rapid switches coalesce).
 
 **Still open (all hardware-gated):**
 - **Place the K-MC1-RFB-00D order** (5V variant! see
