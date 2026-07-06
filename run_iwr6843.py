@@ -71,7 +71,8 @@ else:
 from openflight_iwr6843.iwr6843_source import IWR6843Source  # noqa: E402
 from openflight_iwr6843.shot_fusion import AudioRing, ShotFuser  # noqa: E402
 from openflight_iwr6843.gspro_adapter import GSProClient  # noqa: E402
-from openflight_iwr6843.session import SessionConfig  # noqa: E402
+from openflight_iwr6843.session import (SessionConfig, SELECTORS,  # noqa: E402
+                                        from_selector)
 
 import openflight.server as ofserver  # noqa: E402
 from openflight.launch_monitor import ClubType, Shot  # noqa: E402
@@ -138,7 +139,21 @@ def _fused_to_shot(fused: dict, club: ClubType) -> Shot:
     """Adapt shot_fusion's fused dict to openflight's Shot dataclass, tagged
     mode="hardware" (not "mock") so on_shot_detected runs the real carry
     path: resolve_launch()+simulate() when --ballistics is set, table
-    fallback otherwise -- the same branch real OPS243 shots take."""
+    fallback otherwise -- the same branch real OPS243 shots take.
+
+    Speed-training swings take the same adapter with mode="speed-training":
+    on_shot_detected still runs (mode != "mock"), but ball_speed 0 + no
+    launch angle degrade its ball machinery to no-ops (carry ~0), and the
+    mode tag is what the patched shot_to_dict forwards so the UI renders a
+    club-speed-only swing card instead of a shot card."""
+    if fused.get("swing"):
+        return Shot(
+            ball_speed_mph=0.0,
+            timestamp=datetime.now(),
+            club_speed_mph=fused.get("club_speed_mph"),
+            club=club,
+            mode="speed-training",
+        )
     conf = fused.get("geometry_confidence")
     return Shot(
         ball_speed_mph=fused["ball_speed_mph"],
@@ -192,7 +207,10 @@ class IWR6843Monitor:
         # output directly -- ball_speed_mph/launch_angle_deg/etc.) BEFORE
         # conversion to openflight's Shot dataclass below. Best-effort: a
         # GSPro send failure must never take down real shot processing.
-        if self.gspro is not None:
+        # Speed-training swings are NOT forwarded: GSPro's Open Connect API
+        # models ball flight, and a 0-mph "ball" would render as a whiffed
+        # shot in the sim rather than a swing rep.
+        if self.gspro is not None and not fused.get("swing"):
             try:
                 self.gspro.send_shot(fused)
             except OSError:
@@ -235,29 +253,74 @@ class IWR6843Monitor:
         return list(self._shots)
 
     def get_session_stats(self) -> dict:
-        if not self._shots:
-            return {"shot_count": 0, "avg_ball_speed": 0, "max_ball_speed": 0,
-                     "min_ball_speed": 0, "avg_club_speed": None,
-                     "avg_smash_factor": None, "avg_carry_est": 0}
+        # Swings (mode="speed-training") are kept OUT of the ball-speed
+        # aggregates -- their ball_speed is a structural 0.0, not a slow
+        # shot, and one swing would crater min/avg. They get their own
+        # club-speed aggregates instead (max is the number overspeed
+        # protocols train against).
+        shots = [s for s in self._shots if s.mode != "speed-training"]
+        swings = [s for s in self._shots if s.mode == "speed-training"]
         import statistics
-        speeds = [s.ball_speed_mph for s in self._shots]
-        club_speeds = [s.club_speed_mph for s in self._shots if s.club_speed_mph]
-        smashes = [s.smash_factor for s in self._shots if s.smash_factor]
-        return {
-            "shot_count": len(self._shots),
-            "avg_ball_speed": statistics.mean(speeds),
-            "max_ball_speed": max(speeds),
-            "min_ball_speed": min(speeds),
-            "avg_club_speed": statistics.mean(club_speeds) if club_speeds else None,
-            "avg_smash_factor": statistics.mean(smashes) if smashes else None,
-            "avg_carry_est": statistics.mean([s.estimated_carry_yards for s in self._shots]),
-        }
+        stats = {"shot_count": 0, "avg_ball_speed": 0, "max_ball_speed": 0,
+                 "min_ball_speed": 0, "avg_club_speed": None,
+                 "avg_smash_factor": None, "avg_carry_est": 0}
+        if shots:
+            speeds = [s.ball_speed_mph for s in shots]
+            club_speeds = [s.club_speed_mph for s in shots if s.club_speed_mph]
+            smashes = [s.smash_factor for s in shots if s.smash_factor]
+            stats.update(
+                shot_count=len(shots),
+                avg_ball_speed=statistics.mean(speeds),
+                max_ball_speed=max(speeds),
+                min_ball_speed=min(speeds),
+                avg_club_speed=statistics.mean(club_speeds) if club_speeds else None,
+                avg_smash_factor=statistics.mean(smashes) if smashes else None,
+                avg_carry_est=statistics.mean(
+                    [s.estimated_carry_yards for s in shots]),
+            )
+        if swings:
+            swing_speeds = [s.club_speed_mph for s in swings if s.club_speed_mph]
+            if swing_speeds:
+                stats.update(
+                    swing_count=len(swing_speeds),
+                    max_swing_speed=max(swing_speeds),
+                    avg_swing_speed=statistics.mean(swing_speeds),
+                )
+        return stats
 
     def clear_session(self) -> None:
         self._shots = []
 
     def set_club(self, club: ClubType) -> None:
         self._current_club = club
+
+    # ---- live mode switching (web UI mode picker) --------------------------
+
+    def set_session_mode(self, mode: str) -> dict:
+        """Switch indoor/outdoor/speed at runtime. Called from the SocketIO
+        thread by the patched server's set_session_mode handler; the radar
+        switch itself is queued and applied by the acquisition thread at a
+        safe point (between captures) -- nothing here blocks or races the
+        stream. Ball type stays whatever the session started with.
+
+        Mode -> chirp profile is fixed (indoor/speed -> golf.cfg, outdoor ->
+        golf-outdoor.cfg): a custom --cfg override holds only until the
+        first switch, since an override tuned for one gate/duty profile has
+        no meaning in the others."""
+        session = from_selector(mode, self.session.ball_type)  # raises on junk
+        cfg_name = "golf-outdoor.cfg" if session.environment == "outdoor" \
+            else "golf.cfg"
+        cfg_path = str(REPO_ROOT / "openflight_iwr6843" / cfg_name)
+        self.session = session
+        self.fuser.set_session(session)
+        self.source.request_session(session, cfg_path)
+        log.info("[session] mode -> %s (%s)", mode, session.summary())
+        return self.get_session_mode()
+
+    def get_session_mode(self) -> dict:
+        return {"mode": self.session.selector,
+                "modes": list(SELECTORS),
+                "summary": self.session.summary()}
 
 
 def main() -> None:
@@ -279,6 +342,12 @@ def main() -> None:
                               "window, looser CFAR, no clutter removal). Default: indoor.")
     parser.add_argument("--ball", choices=["plain", "marked", "rct"], default="plain",
                          help="ball type; sets the measured-spin confidence floor")
+    parser.add_argument("--speed-training", action="store_true",
+                         help="start in speed-training mode: club-head speed ONLY "
+                              "(swinging without a ball). Swings ride the same "
+                              "server/UI stream as shots, rendered as club-speed "
+                              "cards. All three modes (indoor/outdoor/speed) are "
+                              "also live-switchable from the web UI's mode picker.")
     parser.add_argument("--ballistics", action="store_true",
                          help="use the RK4 drag+Magnus physics engine for carry")
     parser.add_argument("--host", default="0.0.0.0")
@@ -302,13 +371,23 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO,
                          format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
-    session = SessionConfig("outdoor" if args.outdoor else "indoor", args.ball)
+    if args.speed_training and args.outdoor:
+        # Deliberately the same session (see session.Mode): speed training
+        # always runs the indoor chirp profile, whatever the venue.
+        log.info("[session] --outdoor is moot in speed-training mode "
+                 "(the clubhead is ~2-3 m out either way)")
+    session = from_selector("speed" if args.speed_training
+                            else ("outdoor" if args.outdoor else "indoor"),
+                            args.ball)
     log.info("[session] %s", session.summary())
     if args.cfg is None:
         # The outdoor session needs the outdoor chirp profile to actually
         # reach past 6 m (audit D-5): the session's range-gate rewrite can
-        # only tighten what the chip emits, never extend it.
-        name = "golf-outdoor.cfg" if args.outdoor else "golf.cfg"
+        # only tighten what the chip emits, never extend it. Indoor and
+        # speed-training both use the indoor profile (max frame rate on a
+        # close, briefly-radial clubhead).
+        name = "golf-outdoor.cfg" if session.environment == "outdoor" \
+            else "golf.cfg"
         args.cfg = str(REPO_ROOT / "openflight_iwr6843" / name)
         log.info("[session] chirp profile: %s", name)
 

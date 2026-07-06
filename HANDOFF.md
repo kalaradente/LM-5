@@ -90,7 +90,7 @@ patch. On a dev machine, symlink it for testing:
 | `openflight_iwr6843/kalman.py` | `BallTracker` (3D CV+gravity, tilt-aware) and `FreqTracker` (spin carrier). |
 | `openflight_iwr6843/spin_decoder.py` | K-MC1 I/Q → spin RPM. `clean_iq` (mains notch only, AC-only), `decode()`, `--selftest`. |
 | `openflight_iwr6843/shot_fusion.py` | Merges geometry+spin, `AudioRing`, `ShotFuser`, `infer_spin` fallback. |
-| `openflight_iwr6843/session.py` | `SessionConfig` presets (indoor/outdoor × ball type). |
+| `openflight_iwr6843/session.py` | `SessionConfig` presets (indoor/outdoor/speed × ball type); `from_selector()` is the web mode picker's entry point. |
 | `openflight_iwr6843/gspro_adapter.py` | GSPro Open Connect client. |
 | `openflight_iwr6843/gain.py` | HiFiBerry capture-gain via pyalsaaudio (Linux only). |
 | `openflight_iwr6843/golf.cfg` | IWR6843 chirp profile, indoor (heavily commented re: antenna FoV). 3 TX (elevation!, audit V-1), 454.5 Hz, R_max 6.09 m. |
@@ -100,7 +100,8 @@ patch. On a dev machine, symlink it for testing:
 | `spin_capture_simulator.py` | Synthesize raw K-MC1 I/Q → test `spin_decoder.decode()`. No hardware. |
 | `geometry_capture_simulator.py` | Synthesize IWR6843 captures (swing-arc club + ballistic ball) through a HOSTILE observation model (V-7: anisotropic elevation noise, bin quantization, wrong-hypothesis Doppler, statics, swaying golfer, false alarms, impact merge, burst gaps — all default-on, with ablation knobs) → test `analyze()`'s track-based classifier against measured 20-seed envelopes. No hardware. |
 | `scripts/setup_wizard.sh` | One-command Pi bring-up (clone+patch upstream, deps, Node/UI, HiFiBerry overlay, dialout, port auto-detect+udev, gain, writes `hardware.env`). |
-| `patches/simulate_custom_shot.patch` | The one additive change to upstream `server.py` that `--live` needs; wizard auto-applies. |
+| `patches/simulate_custom_shot.patch` | Additive change to upstream `server.py` that `--live` needs; wizard auto-applies. |
+| `patches/session_mode.patch` | Second additive upstream patch (order-independent with the first): `set/get_session_mode` SocketIO events, `mode` in `shot_to_dict`, and the React mode picker (indoor/outdoor/speed) + `SwingDisplay` speed-training view. Wizard applies all `patches/*.patch`. |
 | `openflight_iwr6843/docs/firmware-flashing.md` | Uniflash flashing guide + real SOP switch table + flash-vs-config explainer. |
 | `openflight_iwr6843/docs/kmc1-harness.md` | K-MC1 buy-and-solder reference: order -00D (5V), Pin 1 /Enable → GND (internal pullup trap!), pin table, supply filtering, clip-risk budget. |
 | `openflight_iwr6843/docs/mounting.md` | Physical sensor mounting decision + rationale (side-by-side, one rigid plate, ~2m/height≈ball-height/10° tilt) and confirmed K-MC1/IWR6843ISK physical specs. |
@@ -249,6 +250,16 @@ Highlights a fresh session should know:
 - Every shot is fully logged locally: `captures/radar_<id>.npz` +
   `audio_<id>.npy` + one JSON line in `captures/shots.jsonl` (feeds
   `validate.py` directly).
+- **Speed-training mode (2026-07-06)**: 3-way session mode
+  (indoor/outdoor/speed), live-switchable from the web UI's header picker
+  (`set_session_mode` SocketIO event → monitor queues → acquisition thread
+  re-streams the chirp cfg between captures). Speed mode = club-head speed
+  ONLY, ball-less swings riding the same stream as shots
+  (`analyze_swing()`, ball_speed structurally 0, `mode="speed-training"`,
+  no spin/GSPro). Known limit, self-flagged: fold-shoulder band swings
+  (~84 mph arc-bottom radial indoors) are ±10 mph fold-ambiguous
+  (`speed_fold_ambiguous`); everywhere else ≤6 mph, ~2 typical (20-seed
+  hostile envelope). See TODO's Software entry + README "Session modes".
 
 **Still open (all hardware-gated):**
 - **Place the K-MC1-RFB-00D order** (5V variant! see

@@ -206,6 +206,32 @@ Running list of open items. Newest relevant item first per section.
 
 ## Software
 
+- [x] **Speed-training mode + live 3-way mode switching (2026-07-06,
+      Johnny's request)**: club-head-speed-only mode for ball-less
+      overspeed training, riding the EXACT same stream as shots
+      (analyze_swing() -> fuser -> publish -> on_shot_detected -> "shot"
+      emit -> UI) with ball_speed structurally 0, no spin decode, no GSPro
+      forward, mode="speed-training" tag. The web UI grew a header mode
+      picker (indoor/outdoor/speed) that emits set_session_mode over
+      SocketIO; the monitor queues the switch and the acquisition thread
+      applies it BETWEEN captures by re-streaming the chirp cfg (cfgs
+      carry their own sensorStop/flushCfg/sensorStart -- the Visualizer's
+      own live-reconfigure flow), so indoor<->outdoor profile swaps work
+      live too. Speed mode always uses the indoor profile (clubhead is
+      ~2-3 m out whatever the venue; 454.5 Hz maximizes arc-bottom fixes).
+      Upstream side lives in patches/session_mode.patch (additive,
+      order-independent with the simulate patch, wizard applies both).
+      Verified: 20-seed hostile swing envelope (~2 mph typical, <=6 mph,
+      fold-shoulder band +/-10 mph SELF-FLAGGED via speed_fold_ambiguous
+      -- a folded bottom and a just-under-v_max bottom are observationally
+      identical there, see analyze_swing()); live SocketIO press test
+      (valid/junk/malformed modes, unsupported-monitor posture, swing
+      riding the real shot stream); tsc + eslint clean. S-2 posture holds:
+      the new ingress is control-plane only, whitelisted by from_selector.
+      BENCH (rung 5): confirm the fold-shoulder ambiguity band against a
+      real swing at known speed; radar-vs-real-clock latency of the mode
+      switch is a nicety, not a correctness item.
+
 - [x] **Physical invariant: launch angle >= 0** (2026-07-05, Johnny's
       rule — E-8 in audit-log.md): analyze() clamps negative launch fits
       to 0, cuts geometry_confidence in proportion to the violation, and

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import struct
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -125,6 +126,14 @@ class IWR6843Source:
         self._pre_roll: deque[Frame] = deque()
         self._running = False
         self._last_frame_num = None
+        # Live session switching (web UI mode picker -> SocketIO ->
+        # monitor.set_session_mode -> here). The request is only QUEUED on
+        # the caller's thread; run() applies it at a safe point in its own
+        # loop -- between captures, never mid-window -- because applying
+        # means re-streaming the whole chirp cfg (sensorStop/flushCfg/...
+        # /sensorStart, the cfg files carry those lines themselves).
+        self._pending_lock = threading.Lock()
+        self._pending_session: Optional[tuple] = None
 
     @staticmethod
     def _parse_frame_period(cfg_path: str) -> float:
@@ -223,6 +232,44 @@ class IWR6843Source:
             tok[8] = f"{nudged:g}"
             return " ".join(tok)
         return line
+
+    # ---- live session switching ------------------------------------------
+
+    def request_session(self, session: SessionConfig, cfg_path: str) -> None:
+        """Queue a session switch (thread-safe; callable from the SocketIO
+        thread). run() applies it between captures via _apply_pending()."""
+        with self._pending_lock:
+            self._pending_session = (session, cfg_path)
+
+    def _apply_pending(self) -> bool:
+        """Apply a queued session switch, if any. Returns True if applied.
+        Only called from run()'s own thread, between captures."""
+        with self._pending_lock:
+            pending, self._pending_session = self._pending_session, None
+        if pending is None:
+            return False
+        session, cfg_path = pending
+        self.session = session
+        self.cfg_path = cfg_path
+        self.range_gate = session.range_gate
+        self.capture_window = session.capture_window_s
+        self.frame_period = self._parse_frame_period(cfg_path)
+        self.v_max_ext = self._parse_vmax_ext(cfg_path)
+        # Stale acquisition state must not leak across the switch: buffered
+        # bytes/pre-roll frames were captured under the OLD chirp profile
+        # (different frame period, v_max, gate), and the chip restarts its
+        # frame counter -- carrying _last_frame_num over would print a bogus
+        # frame-skip warning and, worse, could hand analyze() a capture whose
+        # timing mixes two frame clocks.
+        self._buf.clear()
+        self._pre_roll.clear()
+        self._last_frame_num = None
+        # The cfg files open with sensorStop + flushCfg and close with
+        # sensorStart -- streaming the file IS the full live-reconfigure
+        # sequence (same flow the TI Demo Visualizer uses).
+        self.configure()
+        print(f"[iwr6843] session switched: {session.summary()}")
+        return True
 
     # ---- TLV stream ------------------------------------------------------
 
@@ -323,6 +370,11 @@ class IWR6843Source:
         armed, last_shot = True, 0.0
         gen = self.frames()
         for frame in gen:
+            # Safe point for a queued mode switch: not mid-capture, and the
+            # frame we're holding predates the switch, so drop it.
+            if self._pending_session is not None and self._apply_pending():
+                armed, last_shot = True, 0.0
+                continue
             self._pre_roll.append(frame)
             while self._pre_roll and \
                     frame.t - self._pre_roll[0].t > self.PRE_ROLL:
@@ -339,12 +391,21 @@ class IWR6843Source:
                     if f.t >= deadline:
                         break
                 capture_id = self._archive(capture)
-                geom = self.analyze(capture)
-                if geom is not None:
-                    geom["capture_id"] = capture_id
-                    self.on_geometry(geom)
+                # Speed-training mode: the SAME stream, but the capture is a
+                # ball-less swing -- analyze_swing() reads peak club-head
+                # speed and the record rides on_geometry -> fuser -> publish
+                # exactly like a shot (the fuser skips the spin channel for
+                # swings; see shot_fusion.ShotFuser.on_geometry).
+                if self.session.speed_training:
+                    result = self.analyze_swing(capture)
+                else:
+                    result = self.analyze(capture)
+                if result is not None:
+                    result["capture_id"] = capture_id
+                    self.on_geometry(result)
                 elif capture_id:
-                    print(f"[iwr6843] trigger with no shot -> archived "
+                    what = "swing" if self.session.speed_training else "shot"
+                    print(f"[iwr6843] trigger with no {what} -> archived "
                           f"{capture_id} for replay/tuning")
                 armed, last_shot = False, frame.t
 
@@ -679,7 +740,7 @@ class IWR6843Source:
         return float(min(cands, key=lambda c: abs(c - slope)))
 
     def _capture_rows(self, capture: list) -> tuple[float, list]:
-        """Front half of analyze(): flatten a capture
+        """Shared front half of analyze()/analyze_swing(): flatten a capture
         into time-sorted (t, x, y, z, |v|) rows. Returns (t0, rows).
 
         Time base (audit F-1): radar frame numbers x framePeriodicity give
@@ -985,6 +1046,107 @@ class IWR6843Source:
         if launch_raw is not None:
             out["launch_angle_raw_deg"] = round(launch_raw, 1)
         return out
+
+    # ---- speed-training mode (club only, no ball, no shot) ----------------
+
+    def analyze_swing(self, capture: list) -> Optional[dict]:
+        """Peak club-head speed from a ball-less training swing (session
+        mode "speed"). Returns a record shaped like analyze()'s geometry
+        dict so it can ride the exact same stream (on_geometry -> fuser ->
+        publish -> server -> UI): ball_speed_mph is 0.0, angles/spin are
+        absent, club_speed_mph is the swing speed, and "swing": True lets
+        every downstream stage (fuser, GSPro skip, Shot.mode tag, UI card)
+        recognize it without guessing from the zeros.
+
+        Reuses the shot pipeline's machinery: rows -> _cluster_tracks()
+        (same anisotropic association), then every row of every non-fragment
+        track is unfolded against its track's LOCAL range-rate slope exactly
+        like analyze()'s club-speed candidates -- under 3-TX TDM a real
+        driver head (~49 m/s at arc bottom) reads ~26.7 m/s folded, so the
+        raw Doppler maximum is garbage without unfolding. Max radial
+        clubhead speed occurs at the arc bottom, where the head's velocity
+        is fully radial; before/after it reads low by cos(theta), so the
+        capture-wide maximum IS the swing speed.
+
+        analyze()'s club path sanity-checks its winner against the ball via
+        the smash-factor gate; with no ball that gate doesn't exist, so the
+        peak must instead be SUPPORTED: the head decelerates smoothly off
+        the arc bottom (~e^{-6t} follow-through), so a real peak has
+        same-track neighbors within 10% -- a lone junk row (wrong-hypothesis
+        Doppler, adopted false alarm) does not, and is skipped in favor of
+        the next-fastest supported candidate. The same 67 m/s (150 mph)
+        physical ceiling as analyze() drops impossible unfoldings outright,
+        and the trigger threshold (BALL_MIN_SPEED) floors the result so
+        golfer sway/waggle never publishes as a swing."""
+        if not capture:
+            return None
+        t0, rows = self._capture_rows(capture)
+        if len(rows) < self.MIN_BALL_FIXES:
+            return None
+        cands = []                     # (speed m/s, t_row, track_idx)
+        tracks = self._cluster_tracks(rows)
+        for tj, tr in enumerate(tracks):
+            if tr.shape[0] < 5:
+                continue               # flicker / false-alarm fragments
+            t_tr = tr[:, 0]
+            r_tr = np.linalg.norm(tr[:, 1:4], axis=1)
+            for ki in range(tr.shape[0]):
+                near = np.abs(t_tr - t_tr[ki]) <= 0.012
+                slope = None
+                if near.sum() >= 3:    # local fit, same +/-12 ms window as
+                    slope = abs(float(  # analyze() (head accel ~e^{8t})
+                        np.polyfit(t_tr[near], r_tr[near], 1)[0]))
+                cand = self._unfold(tr[ki, 4], slope)
+                if cand <= 67.0:
+                    cands.append((cand, float(t_tr[ki]), tj))
+        if len(cands) < 2:
+            return None
+        cands.sort(key=lambda c: -c[0])
+        peak = None
+        for i, (c, t_c, tj) in enumerate(cands):
+            if any(oj == tj and 0.90 * c <= oc <= c
+                   for j, (oc, _, oj) in enumerate(cands) if j != i):
+                peak = (c, t_c, tj)
+                break
+        if peak is None or peak[0] < self.BALL_MIN_SPEED:
+            return None
+        # KNOWN FOLD LIMIT, flagged not hidden: a fast head (95 mph =
+        # 42.5 m/s) exceeds v_max_ext (37.9 indoor), so near arc bottom
+        # the raw magnitude rises to the fold SHOULDER (= v_max_ext,
+        # ~14 ms either side of bottom) and DIPS across the bottom itself
+        # -- no single row reads above the shoulder, and every row's
+        # unfold carries Doppler-bin ambiguity. Measured 20-seed hostile
+        # envelope: |err| <= 2.2 mph on ~90% of swings, <= 6 mph
+        # otherwise, EXCEPT within the shoulder band itself, where a
+        # burst gap landing on the arc bottom leaves a folded bottom and
+        # a just-under-v_max bottom OBSERVATIONALLY IDENTICAL (same
+        # quantized shoulder magnitude, overlapping cosine-averaged
+        # range-rate slopes) -- recovery attempts (wide-slope
+        # arbitration, dip inversion 2*v_max - raw) all foundered on
+        # exactly that degeneracy, misreading one case or the other by
+        # more than they fixed. Measured shoulder-band worst cases:
+        # -10.3 and +10.0 mph. What the estimator CAN know is that it's
+        # IN the ambiguous band, and it says so: speed_fold_ambiguous
+        # rides the record into shots.jsonl for replay/validation.
+        c_pk, t_pk, tj = peak
+        tr = tracks[tj]
+        t_tr = tr[:, 0]
+        raws = tr[np.abs(t_tr - t_pk) <= 0.020, 4]
+        # Slack of 0.10*v_max_ext on both tests: covers Doppler-bin
+        # quantization pushing the observed shoulder below v_max_ext
+        # (measured 0.937*v_max_ext in the hostile sim) without reaching
+        # down into genuinely sub-shoulder swings.
+        slack = 0.10 * self.v_max_ext
+        ambiguous = bool(raws.size and raws.max() >= self.v_max_ext - slack
+                         and c_pk <= self.v_max_ext + slack)
+        return {"t_impact": t0 + t_pk,      # arc-bottom time: the same
+                                            # host-clock anchor role
+                                            # t_impact plays for shots
+                "swing": True,
+                "ball_speed_mph": 0.0,
+                "club_speed_mph": round(c_pk * MPS_TO_MPH, 1),
+                "speed_fold_ambiguous": ambiguous,
+                "n_fixes": int(tr.shape[0])}
 
     def stop(self):
         self._running = False

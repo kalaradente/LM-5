@@ -397,6 +397,69 @@ def run(verbose: bool = False) -> bool:
               f"{col_cl:>18}  {'PASS' if ok else 'FAIL'}")
         if verbose:
             print(f"{'':>15}   full: {geom}")
+    ok_all &= speed_training_run(verbose)
+    return ok_all
+
+
+# Speed-training mode: analyze_swing() reads peak club-head speed from the
+# SAME ball-less hostile captures the phantom-shot guard uses (swing-arc
+# club through the full V-7 dirt model, no ball). Truth = the arc-bottom
+# speed the synthesizer was told to produce.
+SWING_SPEEDS = [80.0, 95.0, 105.0, 120.0]
+# Measured tolerances, not aspirations (same policy as the shot envelopes,
+# 20-seed hostile characterization): ~90% of swings measure within 2.2 mph;
+# fold-regime unfolds (>= ~90 mph vs v_max_ext 37.9 m/s) carry Doppler-bin
+# noise up to +/-5.5 mph; and inside the fold-shoulder band itself the
+# KNOWN fold limit applies (see analyze_swing: a folded bottom and a
+# just-under-v_max bottom are observationally identical there) with
+# measured worst cases -10.3/+10.0 mph -- but the estimator self-flags
+# that band via speed_fold_ambiguous. So: within 6 mph, OR self-flagged
+# and within 12.
+SWING_TOL_MPH = 6.0
+SWING_AMBIG_TOL_MPH = 12.0
+
+
+def _swing_ok(g, club: float) -> bool:
+    if g is None:
+        return False
+    err = abs(g["club_speed_mph"] - club)
+    if err < SWING_TOL_MPH:
+        return True
+    return bool(g.get("speed_fold_ambiguous")) and err < SWING_AMBIG_TOL_MPH
+
+
+def speed_training_run(verbose: bool = False) -> bool:
+    src = make_source()
+    ok_all = True
+    print(f"\n{'swing(true)':>15} {'measured':>10}  result   (speed-training "
+          f"mode: analyze_swing)")
+    for club in SWING_SPEEDS:
+        g = src.analyze_swing(synth_capture(None, club, 0.0, 0.0))
+        if g is None:
+            print(f"{club:>15.0f} {'None':>10}  FAIL: missed swing")
+            ok_all = False
+            continue
+        # Structural contract: a swing record must be recognizable as one
+        # downstream (fuser branch, GSPro skip, UI card) without inference.
+        if not (g.get("swing") is True and g.get("ball_speed_mph") == 0.0):
+            print(f"{club:>15.0f}  FAIL: malformed swing record {g}")
+            ok_all = False
+            continue
+        err = g["club_speed_mph"] - club
+        ok = _swing_ok(g, club)
+        ok_all &= ok
+        tag = " (fold-ambiguous)" if g.get("speed_fold_ambiguous") else ""
+        print(f"{club:>15.0f} {g['club_speed_mph']:>10.1f}  "
+              f"{'PASS' + tag if ok else f'FAIL ({err:+.1f} mph)'}")
+        if verbose:
+            print(f"{'':>15}   full: {g}")
+    # Floor: a waggle-speed sweep (below the 17 mph trigger threshold) must
+    # never publish as a swing, mirroring E-8's "no phantom shots" posture.
+    g = src.analyze_swing(synth_capture(None, 10.0, 0.0, 0.0))
+    ok = g is None
+    ok_all &= ok
+    print(f"{'10 (waggle)':>15} {'—':>10}  "
+          f"{'PASS (no phantom swing)' if ok else 'FAIL: published ' + str(g)}")
     return ok_all
 
 
@@ -432,8 +495,20 @@ def sweep(n_seeds: int = 6) -> bool:
             if not ok:
                 fails += 1
                 print(f"  FAIL seed {seed} {name}: {g}")
-    print(f"[sweep] {n_seeds} seeds x {len(SCENARIOS)} scenarios: "
-          f"{fails} failures")
+        # Speed-training mode across the same seeds: every swing measured
+        # in tolerance, waggle never published.
+        for club in SWING_SPEEDS:
+            g = src.analyze_swing(synth_capture(None, club, 0.0, 0.0,
+                                                seed=seed))
+            if not _swing_ok(g, club):
+                fails += 1
+                print(f"  FAIL seed {seed} swing {club:.0f} mph: {g}")
+        if src.analyze_swing(synth_capture(None, 10.0, 0.0, 0.0,
+                                           seed=seed)) is not None:
+            fails += 1
+            print(f"  FAIL seed {seed}: waggle published as swing")
+    print(f"[sweep] {n_seeds} seeds x {len(SCENARIOS)} scenarios "
+          f"+ {len(SWING_SPEEDS) + 1} swing checks: {fails} failures")
     return fails == 0
 
 

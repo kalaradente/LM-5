@@ -1,0 +1,1105 @@
+diff --git a/src/openflight/server.py b/src/openflight/server.py
+index 68ae180..6089a6e 100644
+--- a/src/openflight/server.py
++++ b/src/openflight/server.py
+@@ -863,6 +863,10 @@ def shot_to_dict(shot: Shot) -> dict:
+         "carry_spin_adjusted": round(shot.carry_spin_adjusted)
+         if shot.carry_spin_adjusted
+         else None,
++        # Shot source tag ("rolling-buffer", "mock", "hardware",
++        # "speed-training", ...). The UI uses it to render speed-training
++        # swings as club-speed-only cards and keep them out of ball stats.
++        "mode": shot.mode,
+     }
+ 
+ 
+@@ -1542,6 +1546,48 @@ def handle_set_radar_config(data):
+         socketio.emit("radar_config_error", {"error": str(e)})
+ 
+ 
++@socketio.on("set_session_mode")
++def handle_set_session_mode(data=None):
++    """Switch the acquisition session mode (indoor / outdoor / speed) live.
++
++    Control-plane only: the payload is a single whitelisted-by-the-monitor
++    mode string, validated and applied by the monitor's own
++    set_session_mode() -- no shot data can be injected through this event
++    (the mock-only simulate_custom_shot posture is unaffected). Monitors
++    that don't support live mode switching (mock, rolling-buffer) simply
++    don't expose the method and the event reports unsupported.
++    """
++    mode = (data or {}).get("mode")
++    if not monitor or not hasattr(monitor, "set_session_mode"):
++        socketio.emit(
++            "session_mode_error",
++            {"error": "This launch monitor does not support mode switching"},
++        )
++        return
++    try:
++        result = monitor.set_session_mode(mode)
++        # Broadcast so every connected client's picker moves together.
++        socketio.emit("session_mode", result)
++        logger.info("[SERVER] Session mode -> %s", mode)
++        session_logger = get_session_logger()
++        if session_logger:
++            session_logger.log_config_change(
++                {"session_mode": mode}, source="user"
++            )
++    except ValueError as e:
++        socketio.emit("session_mode_error", {"error": str(e)})
++    except Exception as e:
++        logger.warning("[SERVER] Error setting session mode: %s", e, exc_info=True)
++        socketio.emit("session_mode_error", {"error": str(e)})
++
++
++@socketio.on("get_session_mode")
++def handle_get_session_mode():
++    """Report the current session mode (absent on monitors without one)."""
++    if monitor and hasattr(monitor, "get_session_mode"):
++        socketio.emit("session_mode", monitor.get_session_mode())
++
++
+ @socketio.on("shutdown")
+ def handle_shutdown():
+     """Cleanly shut down the server and all hardware."""
+diff --git a/ui/src/App.css b/ui/src/App.css
+index 9ebc26d..9dc7fcd 100644
+--- a/ui/src/App.css
++++ b/ui/src/App.css
+@@ -378,3 +378,18 @@
+     font-size: 0.875rem;
+   }
+ }
++
++/* Allow the page to scroll vertically (session_mode patch): the kiosk
++   100vh/overflow-hidden lock cropped content on phones. When everything
++   fits (the 7" kiosk case) nothing changes — no scrollbar appears. */
++.app {
++  height: auto;
++  min-height: 100vh;
++  min-height: 100dvh;
++  max-height: none;
++  overflow: visible;
++}
++
++.main {
++  overflow: visible;
++}
+diff --git a/ui/src/App.tsx b/ui/src/App.tsx
+index 8487302..7fecac0 100644
+--- a/ui/src/App.tsx
++++ b/ui/src/App.tsx
+@@ -16,6 +16,8 @@ import { SimStatus } from './components/SimStatus';
+ import { SimShotBadges } from './components/SimShotBadges';
+ import { ClubPicker } from './components/ClubPicker';
+ import { ClubSelectScreen } from './components/ClubSelectScreen';
++import { SessionModePicker } from './components/SessionModePicker';
++import { SwingDisplay } from './components/SwingDisplay';
+ import { BallDetectionIndicator } from './components/BallDetectionIndicator';
+ import { DisplayMode } from './components/DisplayMode';
+ import {
+@@ -66,7 +68,7 @@ const Icons = {
+ 
+ function AppContent() {
+   const { shutdown } = useSocket();
+-  const { connected, mockMode, debugMode, simStatuses, latestSimShots, serverClub } = useSystemStore(
++  const { connected, mockMode, debugMode, simStatuses, latestSimShots, serverClub, sessionMode } = useSystemStore(
+     useShallow((state) => ({
+       connected: state.connected,
+       mockMode: state.mockMode,
+@@ -74,6 +76,7 @@ function AppContent() {
+       simStatuses: state.simStatuses,
+       latestSimShots: state.latestSimShots,
+       serverClub: state.serverClub,
++      sessionMode: state.sessionMode,
+     })),
+   );
+   const { latestShot, shots, isNewShot, shotVersion } = useShotStore(
+@@ -196,6 +199,7 @@ function AppContent() {
+               KMH/M
+             </button>
+           </div>
++          <SessionModePicker />
+           <ClubPicker selectedClub={selectedClub} onClubChange={handleClubChange} />
+           <BallDetectionIndicator
+             available={cameraStatus.available}
+@@ -280,7 +284,15 @@ function AppContent() {
+         {currentView === 'live' && (
+           <div className="live-view">
+             {isNewShot && <div key={shotVersion} className="shot-flash" />}
+-            <ShotDisplay key={shotVersion} shot={latestShot} animate={isNewShot} />
++            {/* No key={shotVersion} here: remounting on every shot would
++                reset the drag-reorderable metric grid mid-interaction. The
++                shot animation still replays via the `animate` class toggle,
++                and card order persists in localStorage regardless. */}
++            {sessionMode === 'speed' ? (
++              <SwingDisplay shots={shots} latestShot={latestShot} animate={isNewShot} />
++            ) : (
++              <ShotDisplay shot={latestShot} animate={isNewShot} />
++            )}
+             {debugMode && <SimShotBadges latestSimShots={latestSimShots} />}
+             {mockMode && (
+               <button className="simulate-button" onClick={() => socketService.simulateShot()}>
+diff --git a/ui/src/components/ReorderableGrid.css b/ui/src/components/ReorderableGrid.css
+new file mode 100644
+index 0000000..642da27
+--- /dev/null
++++ b/ui/src/components/ReorderableGrid.css
+@@ -0,0 +1,42 @@
++/* Responsive, drag-reorderable metric grid (session_mode patch). */
++.reorder-grid {
++  display: grid;
++  /* Reflow: as many ~150px columns as fit, each stretching to share the
++     width. Wide window = more columns; narrow window = fewer, down to one
++     on a phone — no per-breakpoint rules needed. */
++  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
++  gap: var(--space-sm);
++  align-content: start;
++  width: 100%;
++}
++
++.reorder-grid__cell {
++  display: flex;
++  /* Normal touch behavior (scroll/zoom) until a drag actually starts; the
++     hold timer only fires when the finger is stationary, so the page still
++     scrolls under a swipe. */
++  touch-action: manipulation;
++  cursor: grab;
++  transition: transform 0.15s ease, opacity 0.15s ease;
++}
++
++.reorder-grid__cell > * {
++  width: 100%;
++}
++
++/* While a drag is active, suppress scroll and text selection so the lift
++   gesture is clean. */
++.reorder-grid--dragging {
++  touch-action: none;
++  user-select: none;
++}
++
++.reorder-grid__cell--dragging {
++  opacity: 0.65;
++  transform: scale(1.04);
++  cursor: grabbing;
++  /* Let elementFromPoint see the card UNDER the pointer, not the lifted
++     one, so we can compute the drop target. */
++  pointer-events: none;
++  z-index: 2;
++}
+diff --git a/ui/src/components/ReorderableGrid.tsx b/ui/src/components/ReorderableGrid.tsx
+new file mode 100644
+index 0000000..bca67e9
+--- /dev/null
++++ b/ui/src/components/ReorderableGrid.tsx
+@@ -0,0 +1,159 @@
++import { useRef, useState } from 'react';
++import './ReorderableGrid.css';
++
++function loadOrder(storageKey: string): string[] {
++  try {
++    const raw = localStorage.getItem(storageKey);
++    return raw ? JSON.parse(raw) : [];
++  } catch {
++    return [];
++  }
++}
++
++export interface GridItem {
++  id: string;
++  content: React.ReactNode;
++}
++
++interface ReorderableGridProps {
++  items: GridItem[];
++  /** localStorage key under which the user's chosen order is persisted. */
++  storageKey: string;
++}
++
++// Hold this long (stationary) before a card lifts into drag mode. Long
++// enough that a scroll swipe doesn't accidentally start a drag; short
++// enough to feel responsive on a press-and-hold.
++const HOLD_MS = 280;
++// If the pointer travels this far before the hold fires, treat it as a
++// scroll/swipe and abandon the drag attempt.
++const MOVE_CANCEL_PX = 8;
++
++/**
++ * A responsive grid of cards that (a) reflows to fit its width — more
++ * columns when wide, fewer when narrow — and (b) lets the user press-and-
++ * hold a card to drag it to a new position. The chosen order is remembered
++ * per `storageKey` in localStorage.
++ *
++ * Pointer-events based so it works identically with mouse and touch. No
++ * drag library dependency (keeps the upstream patch self-contained).
++ */
++export function ReorderableGrid({ items, storageKey }: ReorderableGridProps) {
++  const [order, setOrder] = useState<string[]>(() => loadOrder(storageKey));
++  const [draggingId, setDraggingId] = useState<string | null>(null);
++  const holdTimer = useRef<number | null>(null);
++  const startPt = useRef<{ x: number; y: number } | null>(null);
++
++  // Reconcile persisted order with the items actually present this render:
++  // saved order first (dropping any that disappeared), then any new ids in
++  // their natural order. A metric that appears later (e.g. spin once
++  // decoded) lands at the end rather than jumping the user's arrangement.
++  const byId = new Map(items.map((i) => [i.id, i]));
++  const ordered: GridItem[] = [];
++  const seen = new Set<string>();
++  for (const id of order) {
++    const it = byId.get(id);
++    if (it) {
++      ordered.push(it);
++      seen.add(id);
++    }
++  }
++  for (const it of items) {
++    if (!seen.has(it.id)) ordered.push(it);
++  }
++
++  const currentIds = () => ordered.map((i) => i.id);
++
++  const clearHold = () => {
++    if (holdTimer.current !== null) {
++      clearTimeout(holdTimer.current);
++      holdTimer.current = null;
++    }
++  };
++
++  const persist = (ids: string[]) => {
++    try {
++      localStorage.setItem(storageKey, JSON.stringify(ids));
++    } catch {
++      /* ignore */
++    }
++  };
++
++  const onPointerDown = (e: React.PointerEvent, id: string) => {
++    // Touch or left mouse button only.
++    if (e.pointerType === 'mouse' && e.button !== 0) return;
++    const cell = e.currentTarget as HTMLElement;
++    const pid = e.pointerId;
++    startPt.current = { x: e.clientX, y: e.clientY };
++    clearHold();
++    holdTimer.current = window.setTimeout(() => {
++      // Freeze the current visible order into state so live reordering has
++      // a stable base, then lift this card.
++      setOrder(currentIds());
++      setDraggingId(id);
++      try {
++        cell.setPointerCapture(pid);
++      } catch {
++        /* capture unsupported */
++      }
++    }, HOLD_MS);
++  };
++
++  const onPointerMove = (e: React.PointerEvent) => {
++    if (!draggingId) {
++      // Still in the hold window — bail out of the drag if the user is
++      // clearly scrolling.
++      if (startPt.current) {
++        const dx = Math.abs(e.clientX - startPt.current.x);
++        const dy = Math.abs(e.clientY - startPt.current.y);
++        if (dx > MOVE_CANCEL_PX || dy > MOVE_CANCEL_PX) clearHold();
++      }
++      return;
++    }
++    e.preventDefault();
++    const el = document.elementFromPoint(e.clientX, e.clientY);
++    const target = el?.closest('[data-rg-id]') as HTMLElement | null;
++    const targetId = target?.dataset.rgId;
++    if (!targetId || targetId === draggingId) return;
++    setOrder((prev) => {
++      const ids = prev.length ? [...prev] : currentIds();
++      const from = ids.indexOf(draggingId);
++      const to = ids.indexOf(targetId);
++      if (from === -1 || to === -1) return prev;
++      ids.splice(from, 1);
++      ids.splice(to, 0, draggingId);
++      return ids;
++    });
++  };
++
++  const endDrag = () => {
++    clearHold();
++    if (draggingId) {
++      persist(currentIds());
++      setDraggingId(null);
++    }
++    startPt.current = null;
++  };
++
++  return (
++    <div
++      className={`reorder-grid ${draggingId ? 'reorder-grid--dragging' : ''}`}
++      onPointerMove={onPointerMove}
++      onPointerUp={endDrag}
++      onPointerCancel={endDrag}
++    >
++      {ordered.map((item) => (
++        <div
++          key={item.id}
++          data-rg-id={item.id}
++          className={`reorder-grid__cell ${
++            draggingId === item.id ? 'reorder-grid__cell--dragging' : ''
++          }`}
++          onPointerDown={(e) => onPointerDown(e, item.id)}
++        >
++          {item.content}
++        </div>
++      ))}
++    </div>
++  );
++}
+diff --git a/ui/src/components/SessionModePicker.css b/ui/src/components/SessionModePicker.css
+new file mode 100644
+index 0000000..e99de7b
+--- /dev/null
++++ b/ui/src/components/SessionModePicker.css
+@@ -0,0 +1,41 @@
++/* Session Mode Picker — styled to match the unit-toggle button group */
++.session-mode-picker {
++  display: flex;
++  background: rgba(212, 175, 55, 0.08);
++  border: 1px solid rgba(212, 175, 55, 0.2);
++  border-radius: var(--radius-sm);
++  overflow: hidden;
++}
++
++.session-mode-picker__button {
++  padding: var(--space-xs) var(--space-md);
++  background: transparent;
++  border: none;
++  color: var(--color-cream);
++  font-size: 0.875rem;
++  cursor: pointer;
++  transition: all var(--transition-smooth);
++  min-height: 40px;
++  white-space: nowrap;
++}
++
++.session-mode-picker__button:hover {
++  background: rgba(212, 175, 55, 0.12);
++}
++
++.session-mode-picker__button--active {
++  background: rgba(212, 175, 55, 0.25);
++  color: #f4cf47;
++  font-weight: 600;
++}
++
++/* The picker widens the header controls row; let it wrap on narrow
++   screens instead of pushing the connection status and power button
++   off-screen. */
++@media (max-width: 900px) {
++  .header__controls {
++    flex-wrap: wrap;
++    justify-content: flex-end;
++    row-gap: var(--space-xs);
++  }
++}
+diff --git a/ui/src/components/SessionModePicker.tsx b/ui/src/components/SessionModePicker.tsx
+new file mode 100644
+index 0000000..52bdcc9
+--- /dev/null
++++ b/ui/src/components/SessionModePicker.tsx
+@@ -0,0 +1,42 @@
++import { useSystemStore } from '../stores/useSystemStore';
++import { socketService } from '../services/socketService';
++import './SessionModePicker.css';
++
++/**
++ * Three-way acquisition mode selector: Indoor / Outdoor / Speed.
++ *
++ * Renders only when the connected monitor reports a session mode (i.e. it
++ * supports live switching — the IWR6843 hardware monitor). Selecting a mode
++ * emits set_session_mode; the active button follows the server's
++ * session_mode broadcast rather than local state, so every connected
++ * client's picker stays in sync and a rejected switch never lies.
++ */
++const MODES: { id: string; label: string }[] = [
++  { id: 'indoor', label: 'Indoor' },
++  { id: 'outdoor', label: 'Outdoor' },
++  { id: 'speed', label: 'Speed' },
++];
++
++export function SessionModePicker() {
++  const sessionMode = useSystemStore((state) => state.sessionMode);
++
++  if (!sessionMode) return null;
++
++  return (
++    <div className="session-mode-picker" role="group" aria-label="Session mode">
++      {MODES.map((mode) => (
++        <button
++          key={mode.id}
++          type="button"
++          className={`session-mode-picker__button ${
++            sessionMode === mode.id ? 'session-mode-picker__button--active' : ''
++          }`}
++          onClick={() => socketService.setSessionMode(mode.id)}
++          aria-pressed={sessionMode === mode.id}
++        >
++          {mode.label}
++        </button>
++      ))}
++    </div>
++  );
++}
+diff --git a/ui/src/components/ShotDisplay.css b/ui/src/components/ShotDisplay.css
+index 9e0ebc2..df7c5ce 100644
+--- a/ui/src/components/ShotDisplay.css
++++ b/ui/src/components/ShotDisplay.css
+@@ -494,3 +494,30 @@
+     height: 5px;
+   }
+ }
++
++/* Uniform metric grid + speed cards live in ReorderableGrid.css now;
++   the old gauge/two-column layout was replaced by a single reflowing,
++   drag-reorderable grid of MetricCards (session_mode patch). */
++
++/* Fluid card text (session_mode patch). Cards now live in a reflowing
++   grid whose column width varies widely, so the old fixed 5rem value
++   font overflowed the box and collided with neighbors. Size value + unit
++   against each card's own width (container query) so they always fit,
++   whatever the column count. */
++.metric-card {
++  container-type: inline-size;
++  min-width: 0;
++  overflow: hidden;
++}
++
++.metric-card__value-row {
++  max-width: 100%;
++}
++
++.metric-card__value {
++  font-size: clamp(1.5rem, 16cqw, 3.5rem);
++}
++
++.metric-card__unit {
++  font-size: clamp(0.75rem, 6cqw, 1.5rem);
++}
+diff --git a/ui/src/components/ShotDisplay.tsx b/ui/src/components/ShotDisplay.tsx
+index b08e4ed..cd645e3 100644
+--- a/ui/src/components/ShotDisplay.tsx
++++ b/ui/src/components/ShotDisplay.tsx
+@@ -2,6 +2,7 @@ import { useMemo } from 'react';
+ import type { Shot } from '../types/shot';
+ import { useUnitPreference } from '../state/useUnitPreference';
+ import { formatCarryRange, formatDistance, formatSpeed, getDistanceUnit, getSpeedUnit } from '../utils/units';
++import { ReorderableGrid, type GridItem } from './ReorderableGrid';
+ import './ShotDisplay.css';
+ 
+ interface ShotDisplayProps {
+@@ -9,76 +10,7 @@ interface ShotDisplayProps {
+   animate?: boolean;
+ }
+ 
+-const GAUGE_MIN = 0;
+-const GAUGE_MAX = 200; // mph
+-const GAUGE_START_ANGLE = -140;
+-const GAUGE_END_ANGLE = 140;
+-
+-function SpeedGauge({
+-  speedMph,
+-  label,
+-  displayValue,
+-  unit,
+-}: {
+-  speedMph: number;
+-  label: string;
+-  displayValue: string;
+-  unit: string;
+-}) {
+-  const percentage = Math.min(Math.max((speedMph - GAUGE_MIN) / (GAUGE_MAX - GAUGE_MIN), 0), 1);
+-  const angle = GAUGE_START_ANGLE + (GAUGE_END_ANGLE - GAUGE_START_ANGLE) * percentage;
+-
+-  const radius = 85;
+-  const cx = 100;
+-  const cy = 100;
+-
+-  const polarToCartesian = (centerX: number, centerY: number, r: number, angleInDegrees: number) => {
+-    const angleInRadians = ((angleInDegrees - 90) * Math.PI) / 180.0;
+-    return {
+-      x: centerX + r * Math.cos(angleInRadians),
+-      y: centerY + r * Math.sin(angleInRadians),
+-    };
+-  };
+-
+-  const describeArc = (startAngle: number, endAngle: number) => {
+-    const start = polarToCartesian(cx, cy, radius, endAngle);
+-    const end = polarToCartesian(cx, cy, radius, startAngle);
+-    const largeArcFlag = endAngle - startAngle <= 180 ? '0' : '1';
+-    return `M ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArcFlag} 0 ${end.x} ${end.y}`;
+-  };
+-
+-  const backgroundArc = describeArc(GAUGE_START_ANGLE, GAUGE_END_ANGLE);
+-  const valueArc = describeArc(GAUGE_START_ANGLE, angle);
+-
+-  return (
+-    <div className="speed-gauge">
+-      <svg viewBox="0 0 200 140" className="speed-gauge__svg">
+-        <path d={backgroundArc} fill="none" stroke="rgba(245, 240, 230, 0.1)" strokeWidth="12" strokeLinecap="round" />
+-        <path
+-          d={valueArc}
+-          fill="none"
+-          stroke="url(#goldGradient)"
+-          strokeWidth="12"
+-          strokeLinecap="round"
+-          className="speed-gauge__value-arc"
+-        />
+-        <defs>
+-          <linearGradient id="goldGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+-            <stop offset="0%" stopColor="#A68B2A" />
+-            <stop offset="100%" stopColor="#F4CF47" />
+-          </linearGradient>
+-        </defs>
+-      </svg>
+-      <div className="speed-gauge__content">
+-        <span className="speed-gauge__value">{displayValue}</span>
+-        <span className="speed-gauge__unit">{unit}</span>
+-        <span className="speed-gauge__label">{label}</span>
+-      </div>
+-    </div>
+-  );
+-}
+-
+-function MetricCard({
++export function MetricCard({
+   value,
+   unit,
+   label,
+@@ -158,94 +90,127 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+   const hasSpin = shot.spin_rpm !== null;
+   const hasLaunchAngle = shot.launch_angle_vertical !== null;
+ 
++  // Every metric — ball speed included — is now a uniform box in one
++  // reflowing, drag-reorderable grid (no more special gauge column).
++  const items: GridItem[] = [
++    {
++      id: 'ball_speed',
++      content: (
++        <MetricCard
++          value={formatSpeed(shot.ball_speed_mph, unitSystem, 1)}
++          unit={getSpeedUnit(unitSystem)}
++          label="Ball Speed"
++          variant="primary"
++        />
++      ),
++    },
++    {
++      id: 'carry',
++      content: (
++        <MetricCard
++          value={formatDistance(displayCarry, unitSystem, 0)}
++          unit={getDistanceUnit(unitSystem)}
++          label="Est. Carry"
++          subtext={carrySubtext}
++          variant="primary"
++        />
++      ),
++    },
++    {
++      id: 'club_speed',
++      content: (
++        <MetricCard
++          value={shot.club_speed_mph ? formatSpeed(shot.club_speed_mph, unitSystem, 1) : '—'}
++          unit={shot.club_speed_mph ? getSpeedUnit(unitSystem) : undefined}
++          label="Club Speed"
++          subtext={shot.smash_factor ? `${shot.smash_factor.toFixed(2)} smash` : undefined}
++          variant="secondary"
++        />
++      ),
++    },
++    {
++      id: 'v_launch',
++      content: (
++        <MetricCard
++          value={hasLaunchAngle ? shot.launch_angle_vertical!.toFixed(1) : '—'}
++          unit={hasLaunchAngle ? '°' : undefined}
++          label="V. Launch"
++          subtext={hasLaunchAngle ? (shot.angle_source ?? undefined) : undefined}
++          variant="secondary"
++          confidence={hasLaunchAngle ? getLaunchAngleQuality(shot.launch_angle_confidence) : null}
++        />
++      ),
++    },
++  ];
++
++  if (shot.club_angle_deg !== null) {
++    items.push({
++      id: 'club_aoa',
++      content: (
++        <MetricCard value={shot.club_angle_deg.toFixed(1)} unit="°" label="Club AoA" subtext="radar" variant="secondary" />
++      ),
++    });
++  }
++  if (shot.club_path_deg !== null) {
++    items.push({
++      id: 'club_path',
++      content: (
++        <MetricCard
++          value={(shot.club_path_deg >= 0 ? '+' : '') + shot.club_path_deg.toFixed(1)}
++          unit="°"
++          label="Club Path"
++          subtext="radar"
++          variant="secondary"
++        />
++      ),
++    });
++  }
++  if (shot.spin_axis_deg !== null) {
++    items.push({
++      id: 'spin_axis',
++      content: (
++        <MetricCard
++          value={(shot.spin_axis_deg >= 0 ? '+' : '') + shot.spin_axis_deg.toFixed(1)}
++          unit="°"
++          label="Spin Axis"
++          subtext={shot.spin_axis_deg > 2 ? 'fade' : shot.spin_axis_deg < -2 ? 'draw' : 'straight'}
++          variant="secondary"
++        />
++      ),
++    });
++  }
++  if (shot.launch_angle_horizontal !== null) {
++    items.push({
++      id: 'h_launch',
++      content: (
++        <MetricCard
++          value={(shot.launch_angle_horizontal >= 0 ? '+' : '') + shot.launch_angle_horizontal.toFixed(1)}
++          unit="°"
++          label="H. Launch"
++          subtext={shot.angle_source ?? undefined}
++          variant="secondary"
++          confidence={getLaunchAngleQuality(shot.launch_angle_confidence)}
++        />
++      ),
++    });
++  }
++  items.push({
++    id: 'spin_rate',
++    content: (
++      <MetricCard
++        value={hasSpin ? formatSpinRpm(shot.spin_rpm!) : '—'}
++        unit={hasSpin ? 'rpm' : undefined}
++        label="Spin Rate"
++        subtext={hasSpin && shot.spin_source ? (shot.spin_source === 'calculated' ? 'estimated' : 'radar') : undefined}
++        variant="spin"
++        confidence={hasSpin ? shot.spin_quality : null}
++      />
++    ),
++  });
++
+   return (
+     <div className={`shot-display ${animate ? 'shot-display--animate' : ''}`}>
+-      <div className="shot-display__layout">
+-        <div className="shot-display__primary">
+-          <SpeedGauge
+-            speedMph={shot.ball_speed_mph}
+-            label="Ball Speed"
+-            displayValue={formatSpeed(shot.ball_speed_mph, unitSystem, 1)}
+-            unit={getSpeedUnit(unitSystem)}
+-          />
+-        </div>
+-
+-        <div className="shot-display__metrics">
+-          <MetricCard
+-            value={formatDistance(displayCarry, unitSystem, 0)}
+-            unit={getDistanceUnit(unitSystem)}
+-            label="Est. Carry"
+-            subtext={carrySubtext}
+-            variant="primary"
+-          />
+-          <MetricCard
+-            value={shot.club_speed_mph ? formatSpeed(shot.club_speed_mph, unitSystem, 1) : '—'}
+-            unit={shot.club_speed_mph ? getSpeedUnit(unitSystem) : undefined}
+-            label="Club Speed"
+-            subtext={shot.smash_factor ? `${shot.smash_factor.toFixed(2)} smash` : undefined}
+-            variant="secondary"
+-          />
+-          <MetricCard
+-            value={hasLaunchAngle ? shot.launch_angle_vertical!.toFixed(1) : '—'}
+-            unit={hasLaunchAngle ? '°' : undefined}
+-            label="V. Launch"
+-            subtext={hasLaunchAngle ? (shot.angle_source ?? undefined) : undefined}
+-            variant="secondary"
+-            confidence={hasLaunchAngle ? getLaunchAngleQuality(shot.launch_angle_confidence) : null}
+-          />
+-          {shot.club_angle_deg !== null && (
+-            <MetricCard
+-              value={shot.club_angle_deg.toFixed(1)}
+-              unit="°"
+-              label="Club AoA"
+-              subtext="radar"
+-              variant="secondary"
+-            />
+-          )}
+-          {shot.club_path_deg !== null && (
+-            <MetricCard
+-              value={(shot.club_path_deg >= 0 ? '+' : '') + shot.club_path_deg.toFixed(1)}
+-              unit="°"
+-              label="Club Path"
+-              subtext="radar"
+-              variant="secondary"
+-            />
+-          )}
+-          {shot.spin_axis_deg !== null && (
+-            <MetricCard
+-              value={(shot.spin_axis_deg >= 0 ? '+' : '') + shot.spin_axis_deg.toFixed(1)}
+-              unit="°"
+-              label="Spin Axis"
+-              subtext={shot.spin_axis_deg > 2 ? 'fade' : shot.spin_axis_deg < -2 ? 'draw' : 'straight'}
+-              variant="secondary"
+-            />
+-          )}
+-          {shot.launch_angle_horizontal !== null && (
+-            <MetricCard
+-              value={(shot.launch_angle_horizontal >= 0 ? '+' : '') + shot.launch_angle_horizontal.toFixed(1)}
+-              unit="°"
+-              label="H. Launch"
+-              subtext={shot.angle_source ?? undefined}
+-              variant="secondary"
+-              confidence={getLaunchAngleQuality(shot.launch_angle_confidence)}
+-            />
+-          )}
+-          <MetricCard
+-            value={hasSpin ? formatSpinRpm(shot.spin_rpm!) : '—'}
+-            unit={hasSpin ? 'rpm' : undefined}
+-            label="Spin Rate"
+-            subtext={
+-              hasSpin && shot.spin_source
+-                ? shot.spin_source === 'calculated'
+-                  ? 'estimated'
+-                  : 'radar'
+-                : undefined
+-            }
+-            variant="spin"
+-            confidence={hasSpin ? shot.spin_quality : null}
+-          />
+-        </div>
+-      </div>
++      <ReorderableGrid items={items} storageKey="openflight.metricOrder.shot" />
+     </div>
+   );
+ }
+diff --git a/ui/src/components/ShotList.tsx b/ui/src/components/ShotList.tsx
+index 8bdd1fa..e2dd911 100644
+--- a/ui/src/components/ShotList.tsx
++++ b/ui/src/components/ShotList.tsx
+@@ -19,12 +19,16 @@ interface ShotRowProps {
+ }
+ 
+ const ShotRow = memo(function ShotRow({ shot, shotNumber, unitSystem, distanceUnit }: ShotRowProps) {
++  // Speed-training swing: club speed is the only real metric — ball_speed
++  // is a structural 0 and carry/launch/spin don't exist. Tag the row and
++  // dash the ball column instead of printing a misleading 0.0.
++  const isSwing = shot.mode === 'speed-training';
+   return (
+     <div className="shot-row">
+       <span className="shot-row__number">#{shotNumber}</span>
+-      <span className="shot-row__club">{shot.club}</span>
++      <span className="shot-row__club">{isSwing ? 'swing' : shot.club}</span>
+       <span className="shot-row__stat">
+-        <span className="shot-row__value">{formatSpeed(shot.ball_speed_mph, unitSystem, 1)}</span>
++        <span className="shot-row__value">{isSwing ? '—' : formatSpeed(shot.ball_speed_mph, unitSystem, 1)}</span>
+         <span className="shot-row__label">ball</span>
+       </span>
+       <span className="shot-row__stat">
+@@ -32,15 +36,15 @@ const ShotRow = memo(function ShotRow({ shot, shotNumber, unitSystem, distanceUn
+         <span className="shot-row__label">club</span>
+       </span>
+       <span className="shot-row__stat">
+-        <span className="shot-row__value">{shot.launch_angle_vertical !== null ? `${shot.launch_angle_vertical.toFixed(1)}°` : '—'}</span>
++        <span className="shot-row__value">{!isSwing && shot.launch_angle_vertical !== null ? `${shot.launch_angle_vertical.toFixed(1)}°` : '—'}</span>
+         <span className="shot-row__label">launch</span>
+       </span>
+       <span className="shot-row__stat">
+-        <span className="shot-row__value">{shot.spin_rpm !== null ? shot.spin_rpm.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—'}</span>
++        <span className="shot-row__value">{!isSwing && shot.spin_rpm !== null ? shot.spin_rpm.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—'}</span>
+         <span className="shot-row__label">spin</span>
+       </span>
+       <span className="shot-row__stat shot-row__stat--carry">
+-        <span className="shot-row__value">{formatDistance(shot.estimated_carry_yards, unitSystem, 0)}</span>
++        <span className="shot-row__value">{isSwing ? '—' : formatDistance(shot.estimated_carry_yards, unitSystem, 0)}</span>
+         <span className="shot-row__label">{distanceUnit}</span>
+       </span>
+     </div>
+diff --git a/ui/src/components/StatsView.tsx b/ui/src/components/StatsView.tsx
+index 85abaec..c103ab7 100644
+--- a/ui/src/components/StatsView.tsx
++++ b/ui/src/components/StatsView.tsx
+@@ -16,20 +16,32 @@ export function StatsView({ shots, onClearSession }: StatsViewProps) {
+   const speedUnit = getSpeedUnit(unitSystem);
+   const distanceUnit = getDistanceUnit(unitSystem);
+ 
+-  const availableClubs = useMemo(() => getUniqueClubs(shots), [shots]);
++  // Speed-training swings ride the same shot stream with ball_speed 0 —
++  // keep them out of the ball-speed/carry aggregates (one swing would
++  // crater min/avg) and give them their own club-speed summary instead.
++  const playShots = useMemo(() => shots.filter((s) => s.mode !== 'speed-training'), [shots]);
++  const swingSpeeds = useMemo(
++    () =>
++      shots
++        .filter((s) => s.mode === 'speed-training' && s.club_speed_mph !== null)
++        .map((s) => s.club_speed_mph!),
++    [shots]
++  );
++
++  const availableClubs = useMemo(() => getUniqueClubs(playShots), [playShots]);
+ 
+   const clubCounts = useMemo(() => {
+     const counts: Record<string, number> = {};
+-    for (const shot of shots) {
++    for (const shot of playShots) {
+       counts[shot.club] = (counts[shot.club] || 0) + 1;
+     }
+     return counts;
+-  }, [shots]);
++  }, [playShots]);
+ 
+   const filteredShots = useMemo(() => {
+-    if (selectedClub === null) return shots;
+-    return shots.filter((s) => s.club === selectedClub);
+-  }, [shots, selectedClub]);
++    if (selectedClub === null) return playShots;
++    return playShots.filter((s) => s.club === selectedClub);
++  }, [playShots, selectedClub]);
+ 
+   const stats = useMemo(() => computeStats(filteredShots), [filteredShots]);
+ 
+@@ -43,12 +55,32 @@ export function StatsView({ shots, onClearSession }: StatsViewProps) {
+ 
+   return (
+     <div className="stats-view">
++      {swingSpeeds.length > 0 && (
++        <div className="stats-grid">
++          <div className="stat-card">
++            <span className="stat-card__value">{swingSpeeds.length}</span>
++            <span className="stat-card__label">Swings (speed)</span>
++          </div>
++          <div className="stat-card stat-card--primary">
++            <span className="stat-card__value">
++              {formatSpeed(Math.max(...swingSpeeds), unitSystem, 1)}
++            </span>
++            <span className="stat-card__label">Max Swing ({speedUnit})</span>
++          </div>
++          <div className="stat-card">
++            <span className="stat-card__value">
++              {formatSpeed(swingSpeeds.reduce((a, b) => a + b, 0) / swingSpeeds.length, unitSystem, 1)}
++            </span>
++            <span className="stat-card__label">Avg Swing ({speedUnit})</span>
++          </div>
++        </div>
++      )}
+       <div className="club-tabs">
+         <button
+           className={`club-tabs__tab ${selectedClub === null ? 'club-tabs__tab--active' : ''}`}
+           onClick={() => setSelectedClub(null)}
+         >
+-          All ({shots.length})
++          All ({playShots.length})
+         </button>
+         {availableClubs.map((club) => (
+           <button
+diff --git a/ui/src/components/SwingDisplay.tsx b/ui/src/components/SwingDisplay.tsx
+new file mode 100644
+index 0000000..65d83c8
+--- /dev/null
++++ b/ui/src/components/SwingDisplay.tsx
+@@ -0,0 +1,101 @@
++import type { Shot } from '../types/shot';
++import { useUnitPreference } from '../state/useUnitPreference';
++import { formatSpeed, getSpeedUnit } from '../utils/units';
++import { MetricCard } from './ShotDisplay';
++import { ReorderableGrid, type GridItem } from './ReorderableGrid';
++import './ShotDisplay.css';
++
++interface SwingDisplayProps {
++  shots: Shot[];
++  latestShot: Shot | null;
++  animate?: boolean;
++}
++
++/**
++ * Live view for speed-training mode: club-head speed is the only metric.
++ *
++ * Swings arrive on the same "shot" stream, tagged mode === "speed-training"
++ * with ball_speed_mph structurally 0 — this view reads ONLY the club speed
++ * and the session aggregates overspeed protocols train against (session
++ * max, average, rep count). Same uniform, reorderable card grid the shot
++ * view uses; club speed is a box exactly like the rest.
++ */
++export function SwingDisplay({ shots, latestShot, animate = false }: SwingDisplayProps) {
++  const { unitSystem } = useUnitPreference();
++
++  const swings = shots.filter(
++    (s) => s.mode === 'speed-training' && s.club_speed_mph !== null
++  );
++  const latest =
++    latestShot?.mode === 'speed-training' && latestShot.club_speed_mph !== null
++      ? latestShot
++      : swings.length > 0
++        ? swings[swings.length - 1]
++        : null;
++
++  if (!latest) {
++    return (
++      <div className="shot-display shot-display--empty">
++        <div className="shot-display__waiting">
++          <p className="shot-display__waiting-text">Speed training</p>
++          <p className="shot-display__waiting-hint">
++            Swing away — no ball needed. Club-head speed only.
++          </p>
++        </div>
++      </div>
++    );
++  }
++
++  const speeds = swings.map((s) => s.club_speed_mph!);
++  const maxSpeed = Math.max(...speeds);
++  const avgSpeed = speeds.reduce((a, b) => a + b, 0) / speeds.length;
++  const isSessionBest = latest.club_speed_mph! >= maxSpeed && swings.length > 1;
++  const speedUnit = getSpeedUnit(unitSystem);
++
++  const items: GridItem[] = [
++    {
++      id: 'club_speed',
++      content: (
++        <MetricCard
++          value={formatSpeed(latest.club_speed_mph!, unitSystem, 1)}
++          unit={speedUnit}
++          label="Club Speed"
++          subtext={isSessionBest ? 'session best!' : undefined}
++          variant="primary"
++        />
++      ),
++    },
++    {
++      id: 'session_max',
++      content: (
++        <MetricCard
++          value={formatSpeed(maxSpeed, unitSystem, 1)}
++          unit={speedUnit}
++          label="Session Max"
++          variant="primary"
++        />
++      ),
++    },
++    {
++      id: 'session_avg',
++      content: (
++        <MetricCard
++          value={formatSpeed(avgSpeed, unitSystem, 1)}
++          unit={speedUnit}
++          label="Session Avg"
++          variant="secondary"
++        />
++      ),
++    },
++    {
++      id: 'swing_count',
++      content: <MetricCard value={swings.length} label="Swings" variant="secondary" />,
++    },
++  ];
++
++  return (
++    <div className={`shot-display ${animate ? 'shot-display--animate' : ''}`}>
++      <ReorderableGrid items={items} storageKey="openflight.metricOrder.swing" />
++    </div>
++  );
++}
+diff --git a/ui/src/services/socketService.ts b/ui/src/services/socketService.ts
+index fae34fe..caaac88 100644
+--- a/ui/src/services/socketService.ts
++++ b/ui/src/services/socketService.ts
+@@ -37,6 +37,9 @@ class SocketService {
+       useSystemStore.getState().setConnected(true);
+       this.socket?.emit('get_session');
+       this.socket?.emit('get_trigger_status');
++      // No response on monitors without live mode switching — the picker
++      // stays hidden (sessionMode remains null).
++      this.socket?.emit('get_session_mode');
+     });
+ 
+     this.socket.on('disconnect', () => {
+@@ -148,6 +151,14 @@ class SocketService {
+     this.socket.on('trigger_status', (data: TriggerStatus) => {
+       useDebugStore.getState().setTriggerStatus(data);
+     });
++
++    this.socket.on('session_mode', (data: { mode: string }) => {
++      useSystemStore.getState().setSessionMode(data.mode);
++    });
++
++    this.socket.on('session_mode_error', (data: { error: string }) => {
++      console.warn(`Session mode error: ${data.error}`);
++    });
+   }
+ 
+   // Emitters
+@@ -178,6 +189,10 @@ class SocketService {
+   toggleCameraStream() {
+     this.socket?.emit('toggle_camera_stream');
+   }
++
++  setSessionMode(mode: string) {
++    this.socket?.emit('set_session_mode', { mode });
++  }
+ }
+ 
+ export const socketService = new SocketService();
+diff --git a/ui/src/stores/useSystemStore.ts b/ui/src/stores/useSystemStore.ts
+index 4ad9281..eae0904 100644
+--- a/ui/src/stores/useSystemStore.ts
++++ b/ui/src/stores/useSystemStore.ts
+@@ -8,12 +8,16 @@ interface SystemState {
+   simStatuses: Record<string, SimStatus>;
+   latestSimShots: Record<string, SimShotInfo>;
+   serverClub: string | null;
++  // Acquisition session mode ("indoor" | "outdoor" | "speed"); null when the
++  // connected monitor doesn't support live mode switching (mock/OPS243).
++  sessionMode: string | null;
+   setConnected: (connected: boolean) => void;
+   setMockMode: (mockMode: boolean) => void;
+   setDebugMode: (debugMode: boolean) => void;
+   setSimStatus: (status: SimStatus) => void;
+   setLatestSimShot: (shot: SimShotInfo) => void;
+   setServerClub: (club: string | null) => void;
++  setSessionMode: (sessionMode: string | null) => void;
+ }
+ 
+ export const useSystemStore = create<SystemState>((set) => ({
+@@ -23,6 +27,7 @@ export const useSystemStore = create<SystemState>((set) => ({
+   simStatuses: {},
+   latestSimShots: {},
+   serverClub: null,
++  sessionMode: null,
+   setConnected: (connected) => set({ connected }),
+   setMockMode: (mockMode) => set({ mockMode }),
+   setDebugMode: (debugMode) => set({ debugMode }),
+@@ -35,4 +40,5 @@ export const useSystemStore = create<SystemState>((set) => ({
+       latestSimShots: { ...state.latestSimShots, [shot.target]: shot },
+     })),
+   setServerClub: (serverClub) => set({ serverClub }),
++  setSessionMode: (sessionMode) => set({ sessionMode }),
+ }));
+diff --git a/ui/src/types/shot.ts b/ui/src/types/shot.ts
+index bb0deec..7d347ff 100644
+--- a/ui/src/types/shot.ts
++++ b/ui/src/types/shot.ts
+@@ -21,6 +21,10 @@ export interface Shot {
+   spin_quality: 'high' | 'medium' | 'low' | null;
+   spin_source: 'measured' | 'calculated' | null;
+   carry_spin_adjusted: number | null;
++  // Shot source tag; "speed-training" marks a ball-less swing record
++  // (club_speed_mph is the only meaningful metric, ball_speed_mph is a
++  // structural 0). Optional: older servers don't send it.
++  mode?: string;
+ }
+ 
+ export interface SessionStats {

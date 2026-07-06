@@ -16,17 +16,53 @@ from typing import Literal
 
 Environment = Literal["indoor", "outdoor"]
 BallType = Literal["plain", "marked", "rct"]
+# "play" = the normal shot pipeline (geometry + spin -> fused shot).
+# "speed" = speed-training mode (overspeed protocols: swinging with NO
+# ball): club-head speed is the ONLY metric. Swings ride the exact same
+# stream as shots -- analyze_swing() -> fuser -> publish -> server ->
+# UI -- but with ball_speed 0, no spin decode, no audio slice; the UI
+# renders them as club-speed-only swing cards. Speed mode always runs
+# the INDOOR chirp profile regardless of venue: the clubhead sweeps the
+# hitting zone ~2-3 m from the sensor, well inside the 6 m indoor gate,
+# and the indoor profile's 454.5 Hz frame rate maximizes fixes on an
+# object that's only radial for a few milliseconds at arc bottom.
+Mode = Literal["play", "speed"]
+
+# What the web UI's mode picker speaks: one 3-way selector instead of
+# environment x mode, because "outdoor speed training" and "indoor speed
+# training" are deliberately the same thing (see the Mode comment above).
+SELECTORS = ("indoor", "outdoor", "speed")
+
+
+def from_selector(selector: str, ball_type: BallType = "plain") -> "SessionConfig":
+    """Build a SessionConfig from the UI's 3-way mode selector."""
+    if selector not in SELECTORS:
+        raise ValueError(f"unknown session mode {selector!r} "
+                         f"(expected one of {SELECTORS})")
+    return SessionConfig("outdoor" if selector == "outdoor" else "indoor",
+                         ball_type,
+                         "speed" if selector == "speed" else "play")
 
 
 @dataclass(frozen=True)
 class SessionConfig:
     environment: Environment = "indoor"
     ball_type: BallType = "plain"
+    mode: Mode = "play"
     # K-MC1 is wired to its AC output (40Hz-15kHz). That's cleaner (no DC
     # offset/hum) and it reads every real shot: in flight the ball translates,
     # so spin rides as sidebands on the kHz Doppler carrier (a 2000rpm driver
     # = 33Hz sidebands on an ~11kHz carrier), well inside AC's passband. No
     # AC/DC selection in software — see openflight_iwr6843/README.md.
+
+    @property
+    def speed_training(self) -> bool:
+        return self.mode == "speed"
+
+    @property
+    def selector(self) -> str:
+        """The 3-way value the web UI's mode picker speaks."""
+        return "speed" if self.speed_training else self.environment
 
     # ---- geometry channel presets ------------------------------------
 
@@ -98,22 +134,30 @@ class SessionConfig:
 
     def tags(self) -> dict:
         """Fields merged into every shot record for validation grouping."""
-        return {"environment": self.environment, "ball_type": self.ball_type}
+        return {"environment": self.environment, "ball_type": self.ball_type,
+                "mode": self.mode}
 
     def summary(self) -> str:
+        if self.speed_training:
+            # No ball, no spin channel, no fuser merge -- only the geometry
+            # presets matter here (ball type is irrelevant to a bare swing).
+            return (f"SPEED TRAINING (club-head speed only) | "
+                    f"gate {self.range_gate}m, window {self.capture_window_s}s")
         return (f"{self.environment}, {self.ball_type} balls | "
                 f"gate {self.range_gate}m, window {self.capture_window_s}s, "
                 f"spin floor {self.spin_conf_floor}")
 
 
 def from_args(argv=None) -> SessionConfig:
-    """CLI helper: --outdoor / --ball plain|marked|rct"""
+    """CLI helper: --outdoor / --ball plain|marked|rct / --speed-training"""
     import argparse
     p = argparse.ArgumentParser()
     p.add_argument("--outdoor", action="store_true")
     p.add_argument("--ball", choices=["plain", "marked", "rct"],
                    default="plain")
+    p.add_argument("--speed-training", action="store_true")
     a = p.parse_args(argv)
-    cfg = SessionConfig("outdoor" if a.outdoor else "indoor", a.ball)
+    cfg = from_selector("speed" if a.speed_training
+                        else ("outdoor" if a.outdoor else "indoor"), a.ball)
     print(f"[session] {cfg.summary()}")
     return cfg

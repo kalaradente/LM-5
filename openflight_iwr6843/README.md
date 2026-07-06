@@ -19,7 +19,7 @@ engine, React UI) is untouched.
 | `iwr6843_source.py` | Serial bring-up, TLV point-cloud parser, shot detection, Kalman-smoothed trajectory → geometry metrics |
 | `spin_decoder.py` | I/Q audio → Kalman-tracked carrier → demodulation → harmonic-sum ("tap-along") candidate bank → spin RPM + confidence. Pools evidence across harmonics, resists the missing-fundamental/octave trap, reports ambiguity honestly |
 | `kalman.py` | Shared filters: `FreqTracker` (1D carrier, gated + RTS-smoothed), `BallTracker` (3D constant-velocity + gravity) |
-| `session.py` | Session mode selector: indoor/outdoor × ball type (plain/marked/rct) → parameter presets for both channels + shot-record tags |
+| `session.py` | Session mode selector: indoor/outdoor/speed-training × ball type (plain/marked/rct) → parameter presets for both channels + shot-record tags. Live-switchable from the web UI's mode picker |
 | `shot_fusion.py` | Audio ring buffer, geometry+spin merge with per-field provenance, OpenFlight publish adapter |
 | `gspro_adapter.py` | GSPro Open Connect client (TCP JSON + heartbeat), fed by `run_iwr6843.py --gspro-host` |
 | `gain.py` | HiFiBerry capture-gain control via pyalsaaudio (Pi/Linux only) |
@@ -59,6 +59,42 @@ Full buy-and-solder reference: `docs/kmc1-harness.md`. The short version:
    drill-spun ball at known RPM: `python -m openflight_iwr6843.spin_decoder
    capture.wav --bench`.
 5. Real swings; record everything (see Validation).
+
+## Session modes: indoor / outdoor / speed training
+
+One 3-way mode, switchable two ways: at startup (`--outdoor` /
+`--speed-training`) or LIVE from the web UI's header mode picker — the
+picker emits `set_session_mode` over the existing SocketIO wire (added by
+`patches/session_mode.patch`), the monitor queues the switch, and the
+acquisition thread applies it between captures by re-streaming the chirp
+cfg (the cfg files carry their own `sensorStop`/`flushCfg`/`sensorStart`,
+so this is the same live-reconfigure flow the TI Visualizer uses). Nothing
+restarts; a capture already in flight finishes under the old mode.
+
+The live view is one uniform grid of metric boxes (ball/club speed
+included — no special gauge). It reflows to the window width (more columns
+when wide, one on a phone), the page scrolls vertically on small screens,
+and boxes can be **press-and-held and dragged to reorder**; the chosen
+order persists per view in `localStorage`.
+
+**Speed training** (overspeed protocols — swinging with no ball) publishes
+club-head speed and NOTHING else: `analyze_swing()` reads the swing's peak
+from the same track machinery `analyze()` uses (arc-bottom radial speed,
+local range-rate unfolding, supported-peak junk rejection), and the record
+rides the exact same stream as a shot — fuser → server → UI — tagged
+`mode="speed-training"` with `ball_speed_mph` a structural 0. The spin
+channel is never consulted, GSPro never sees swings, and the UI renders a
+club-speed card (latest / session max / avg / rep count) instead of a shot
+card. Speed mode always runs the indoor chirp profile: the clubhead sweeps
+~2–3 m from the sensor whatever the venue, and 454.5 Hz maximizes fixes on
+an object that's only fully radial for a few ms at arc bottom.
+
+Known limit, flagged not hidden (same policy as the audit log): a swing
+whose arc-bottom radial speed lands in the fold-shoulder band
+(≈ v_max_ext, ~84 mph indoor) with a detection gap on the bottom itself is
+fold-ambiguous — measured hostile-sim envelope ±10 mph there, ≤6 mph
+everywhere else, ~2 mph typical. The estimator detects the band and tags
+the record `speed_fold_ambiguous` in `captures/shots.jsonl`.
 
 ## Integration
 

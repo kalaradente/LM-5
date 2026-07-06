@@ -45,10 +45,9 @@ log()  { echo -e "${GREEN}[wizard]${NC} $1"; }
 warn() { echo -e "${YELLOW}[wizard]${NC} $1"; }
 error(){ echo -e "${RED}[wizard]${NC} $1"; }
 
-# ---- 0. Vendor openflight_upstream + apply our patch ---------------------
+# ---- 0. Vendor openflight_upstream + apply our patches --------------------
 
 log "Step 0: upstream OpenFlight checkout"
-PATCH="$REPO_ROOT/patches/simulate_custom_shot.patch"
 if [ -d "$UPSTREAM_DIR" ]; then
     log "$UPSTREAM_DIR already present, leaving the checkout as-is."
 else
@@ -56,23 +55,32 @@ else
     git clone --depth 1 "$UPSTREAM_URL" "$UPSTREAM_DIR"
     log "Cloned."
 fi
-# Re-apply our only upstream change (the simulate_custom_shot handler that
-# shot_simulator.py --live needs). Purely additive; see the patch + README.
+# Re-apply our upstream changes: every patch in patches/, all additive and
+# order-independent (disjoint contexts, verified applying both ways):
+#   simulate_custom_shot.patch -- the mock-only injection handler that
+#       shot_simulator.py --live needs.
+#   session_mode.patch -- set/get_session_mode SocketIO events + the web
+#       UI's 3-way mode picker (indoor/outdoor/speed) and speed-training
+#       swing view. Without it the hardware still runs; the picker just
+#       never appears and swings render as 0-mph shot cards.
 # Checked on EVERY run, not just fresh clones: the "safe to re-run" promise
-# has to cover a manually-cloned or interrupted checkout too, or --live
-# breaks silently later.
-if [ -f "$PATCH" ]; then
+# has to cover a manually-cloned or interrupted checkout too, or these
+# features break silently later.
+for PATCH in "$REPO_ROOT"/patches/*.patch; do
+    [ -f "$PATCH" ] || continue
+    PATCH_NAME="$(basename "$PATCH")"
     if git -C "$UPSTREAM_DIR" apply --reverse --check "$PATCH" 2>/dev/null; then
-        log "simulate_custom_shot.patch already applied."
+        log "$PATCH_NAME already applied."
     elif git -C "$UPSTREAM_DIR" apply --check "$PATCH" 2>/dev/null; then
         git -C "$UPSTREAM_DIR" apply "$PATCH"
-        log "Applied simulate_custom_shot.patch (enables shot_simulator.py --live)."
+        log "Applied $PATCH_NAME."
     else
-        warn "simulate_custom_shot.patch neither applied nor appliable (upstream"
-        warn "may have moved on). --live may not work until it's re-applied by"
-        warn "hand; run_iwr6843.py and offline sims are unaffected."
+        warn "$PATCH_NAME neither applied nor appliable (upstream may have"
+        warn "moved on). The feature it carries may not work until it's"
+        warn "re-applied by hand; run_iwr6843.py and offline sims are"
+        warn "unaffected."
     fi
-fi
+done
 
 # ---- 1. Python deps -------------------------------------------------------
 

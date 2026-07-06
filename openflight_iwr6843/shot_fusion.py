@@ -136,7 +136,32 @@ class ShotFuser:
         self.spin_conf_floor = self.session.spin_conf_floor
         self.audio_pre, self.audio_post = self.session.spin_audio_window_s
 
+    def set_session(self, session: SessionConfig) -> None:
+        """Live session switch (web UI mode picker). Cheap and atomic-enough:
+        the three derived fields are plain reads on the fusion path, and a
+        single boundary shot fused under the old floor/window is harmless.
+        (The radar side switches at its own safe point -- see
+        IWR6843Source.request_session -- so a capture already in flight may
+        pair old-chirp geometry with these new spin presets; same one-shot
+        boundary blur, same verdict.)"""
+        self.session = session
+        self.spin_conf_floor = session.spin_conf_floor
+        self.audio_pre, self.audio_post = session.spin_audio_window_s
+
     def on_geometry(self, geom: dict):
+        # Speed-training swings ride the same stream but carry no ball and
+        # therefore no spin question: no audio slice, no decode, no inferred
+        # fallback -- club-head speed is the only metric that exists. The
+        # K-MC1's descending-clubhead exclusion (E-9) is preserved trivially:
+        # the spin channel isn't consulted at all.
+        if geom.get("swing"):
+            swing = dict(geom)
+            swing.update(spin_rpm=None, spin_source=None, spin_confidence=0.0,
+                         spin_axis_hint_deg=None)
+            swing.update(self.session.tags())
+            self._log_shot(swing)
+            self.publish(swing)
+            return
         shot = dict(geom)
         shot["spin_rpm"], shot["spin_source"], shot["spin_confidence"] = \
             None, None, 0.0
