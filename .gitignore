@@ -15,3 +15,5 @@ captures/
 # actionable code; deliberately unpublished (Johnny's call, 2026-07-06)
 DESIGN.md
 PRODUCT.md
+# Impeccable design-system sidecar -- same category as DESIGN.md above
+.impeccable/

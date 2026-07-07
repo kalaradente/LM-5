@@ -55,14 +55,24 @@ else
     git clone --depth 1 "$UPSTREAM_URL" "$UPSTREAM_DIR"
     log "Cloned."
 fi
-# Re-apply our upstream changes: every patch in patches/, all additive and
-# order-independent (disjoint contexts, verified applying both ways):
-#   simulate_custom_shot.patch -- the mock-only injection handler that
-#       shot_simulator.py --live needs.
+# Re-apply our upstream changes: every patch in patches/, applied in glob
+# (alphabetical) order, which the loop below guarantees:
 #   session_mode.patch -- set/get_session_mode SocketIO events + the web
 #       UI's 3-way mode picker (indoor/outdoor/speed) and speed-training
 #       swing view. Without it the hardware still runs; the picker just
 #       never appears and swings render as 0-mph shot cards.
+#   simulate_custom_shot.patch -- the mock-only injection handler that
+#       shot_simulator.py --live needs. Disjoint from the other two.
+#   ui_redesign.patch -- full "Calibrated Instrument" reskin of the web UI
+#       (signal-amber design system, IBM Plex fonts self-hosted via npm,
+#       dark/light theme toggle, per-club tour-average ratings, LH/RH).
+#       Also teaches the MOCK monitor live session modes (indoor/outdoor/
+#       speed; speed emits real club-speed-only swings) so the mode picker
+#       is exercisable without hardware. NOT order-independent: it builds
+#       on session_mode.patch's server events and UI, so it must apply
+#       after it -- glob order already does that ("se" < "ui"). After
+#       applying, `cd ui && npm install` is required (new @fontsource
+#       packages) before the UI build.
 # Checked on EVERY run, not just fresh clones: the "safe to re-run" promise
 # has to cover a manually-cloned or interrupted checkout too, or these
 # features break silently later.
@@ -113,6 +123,12 @@ fi
 if [ -d "$UPSTREAM_DIR/ui" ]; then
     ( cd "$UPSTREAM_DIR/ui" && npm install )
     log "React UI dependencies installed."
+    # Build the UI so the server serves the PATCHED bundle: openflight-server
+    # serves ui/dist statically (FRONTEND_DIST_DIR), so without this step the
+    # Pi would serve whatever stale dist/ exists -- i.e. NOT the LM-2 reskin
+    # applied in Step 0. Re-run safe: vite rebuilds into the same dist/.
+    ( cd "$UPSTREAM_DIR/ui" && npm run build )
+    log "React UI built (ui/dist -- this is the bundle openflight-server serves)."
 else
     warn "$UPSTREAM_DIR/ui not found -- skipping npm install."
 fi

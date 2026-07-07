@@ -19,7 +19,8 @@ integration-only snapshot.
 | `shot_simulator.py` | **Flight-physics** sim: type in ball speed/spin/launch/side-spin → full RK4 drag+Magnus trajectory (carry, apex, curve). `--live` pushes it into a running OpenFlight server so it renders in the real UI. |
 | `spin_capture_simulator.py` | **Spin-decoder** sim: synthesize a raw K-MC1 I/Q capture for a given shot and run the real `spin_decoder.decode()` on it — tests the signal path with no hardware. `--sweep` runs a speed×spin grid. |
 | `run_iwr6843.py` | Run the **real** IWR6843 + K-MC1 hardware against the real OpenFlight server/UI (same `on_shot_detected()` pipeline the live simulator exercises). Optional `--gspro-host` also forwards each shot to GSPro. |
-| `scripts/setup_wizard.sh` | One-command Pi bring-up: clones `openflight_upstream`, installs deps, discovers serial ports + HiFiBerry gain, writes `hardware.env`. |
+| `scripts/setup_wizard.sh` | One-command Pi bring-up: clones `openflight_upstream`, applies `patches/`, installs deps, **builds the web UI** (the bundle the server serves), discovers serial ports + HiFiBerry gain, writes `hardware.env`. |
+| `patches/` | Our changes to OpenFlight upstream, applied by the wizard in glob order: `session_mode` (3-way mode picker + swing view), `simulate_custom_shot` (mock injection for `--live`), `ui_redesign` (the "Calibrated Instrument" web UI — signal-amber design system, IBM Plex, dark/light themes, per-club tour-average launch/spin ratings). The stock OpenFlight UI is what you get by simply not applying `ui_redesign.patch`. |
 | `live_client.py` | WebSocket helper for `shot_simulator.py --live`. |
 | `launch_monitor_parts_list.txt` | Hardware BOM + wiring summary. |
 | `TODO.md` | Running hardware/software roadmap. |
