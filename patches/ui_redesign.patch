@@ -6757,7 +6757,7 @@ index 3f6f3c3..e601e97 100644
  
 diff --git a/ui/src/data/tourAverages.test.ts b/ui/src/data/tourAverages.test.ts
 new file mode 100644
-index 0000000..4da5eea
+index 0000000..5cdd8e2
 --- /dev/null
 +++ b/ui/src/data/tourAverages.test.ts
 @@ -0,0 +1,96 @@
@@ -6765,13 +6765,13 @@ index 0000000..4da5eea
 +import { rateTourStat, TOUR_AVERAGES } from './tourAverages';
 +
 +describe('rateTourStat — per-stat bands', () => {
-+  it('spin uses ±30% of the tour value', () => {
-+    // Driver spin tour avg 2686: band is 1880.2 .. 3491.8
++  it('spin uses ±15% of the tour value', () => {
++    // Driver spin tour avg 2686: band is 2283.1 .. 3088.9
 +    expect(rateTourStat('driver', 'spin', 2686)?.rating).toBe('avg');
-+    expect(rateTourStat('driver', 'spin', 1881)?.rating).toBe('avg');
-+    expect(rateTourStat('driver', 'spin', 3491)?.rating).toBe('avg');
-+    expect(rateTourStat('driver', 'spin', 1800)?.rating).toBe('low');
-+    expect(rateTourStat('driver', 'spin', 3600)?.rating).toBe('high');
++    expect(rateTourStat('driver', 'spin', 2290)?.rating).toBe('avg');
++    expect(rateTourStat('driver', 'spin', 3080)?.rating).toBe('avg');
++    expect(rateTourStat('driver', 'spin', 2200)?.rating).toBe('low');
++    expect(rateTourStat('driver', 'spin', 3150)?.rating).toBe('high');
 +  });
 +
 +  it('ball speed uses ±10 mph (the "tour 170 → under 160 low, over 180 high" rule)', () => {
@@ -6859,7 +6859,7 @@ index 0000000..4da5eea
 +});
 diff --git a/ui/src/data/tourAverages.ts b/ui/src/data/tourAverages.ts
 new file mode 100644
-index 0000000..fd14f51
+index 0000000..59879b2
 --- /dev/null
 +++ b/ui/src/data/tourAverages.ts
 @@ -0,0 +1,116 @@
@@ -6952,7 +6952,7 @@ index 0000000..fd14f51
 +  smash: { ref: (r) => r.smash_factor, band: { abs: 0.05 } },
 +  carry: { ref: (r) => r.carry_yards, band: { pct: 0.1 } },
 +  launch: { ref: (r) => r.launch_deg, band: { abs: 3 } },
-+  spin: { ref: (r) => r.spin_rpm, band: { pct: 0.3 } },
++  spin: { ref: (r) => r.spin_rpm, band: { pct: 0.15 } },
 +  aoa: { ref: (r) => r.attack_angle_deg, band: { abs: 2 } },
 +  peak_ft: { ref: (r) => r.max_height_yards * 3, band: { abs: 15 } },
 +};
