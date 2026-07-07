@@ -94,15 +94,52 @@ which were all implicitly sized at 2.0 m:
 | M-7b | **FIXED (the feature)** | **`_find_teed_balls()`**: compact, persistent, near-zero-Doppler clusters in the tee zone (0.9–3.2 m, ±25° az) that **VANISH before the capture ends** — the vanish is what separates a ball from bay clutter (walls persist) and is evidence nothing but a shot can arrange. Consumed two ways in `_pick_ball_track`: (1) suffixes may not START on a resting-ball row (kills the 37.7° class), and (2) a suffix born within 0.9 m of a lock inside [−30,+60] ms of its vanish is **anchored**: span/fill/gain floors relax (0.028 s / 0.45 / 0.9 m) because the vanish coincidence is independent evidence, while every kinematic gate (monotonic, accel, anti-gravity, rate-consistency) stays at full strength. NO LOCK = EXACTLY the old behavior — detection is best-effort by design and nothing downstream requires it. Each shot records `tee_range_m` (nearest lock), giving the user placement validation for free; measured dead-on (1.52/1.83/2.00/2.13) across the sweep. |
 | M-7c | **FIXED** | Two swing-side placement defects: the M-1b gross-rate sanity rejected whole CAPTURES when the top candidate was a junk fold-branch pair (measured: an 85 mph claim on a track moving 3.3 m/s at 5 ft — a real rep thrown away); moved INSIDE candidate selection so inconsistent candidates lose their turn and the next supported peak gets judged. And a mis-arbitrated branch at 7 ft read +15.3 mph just past the ambiguity flag's band — the estimate-side band widened to 1.15·v_max_ext and `SWING_AMBIG_TOL` set to the measured 16. A gross-ratio flag was tried first and measured USELESS (accurate swings p5=0.76/median 0.84; the two bad reads at 0.76 and 0.92, inside the accurate distribution) — recorded here so nobody re-invents it. |
 
-**Final measured envelopes across 5–7 ft (20 seeds × 4 placements):
-real-shot misses 2/320** (both driver seed 16, a merge-eats-everything
-draw of the same class as V-7's accepted 1-in-20 chip fragmentation —
-not chased, per V-7's own overfitting lesson), **phantoms 0/160, swing
-failures 0/240** (~50% of 80–95 mph swings carry the fold-ambiguous
-flag — their raws genuinely touch the shoulder; 105/120 unflagged),
-**M-1 leaks 0/20**. The sweep now cycles placements (`TEE_SWEEP`) so all
-of this is regression-guarded, and the teed-ball static is on by
-default in every synthesized capture.
+### M-8 — adversarial gauntlet against the lock machinery (same day)
+
+Johnny's brief: "test it. throw real dirt at it and see if it passes."
+It did not pass, twice, and the gauntlet earned its keep:
+
+- **The vanish spoof worked (FOUND + CLOSED)**: a practice swing over a
+  teed ball whose return dies at exactly club-passage (occlusion /
+  marginal SNR — no shot) formed a legitimate lock, the club swept the
+  tee inside the vanish window, and the anchored relaxation bought
+  **5/160 club-arc phantoms, one at confidence 0.95**. Discriminator
+  hunting: birth-downrange-of-lock measured DEAD (real births scatter
+  −0.60..+0.50 m around the lock; phantoms inside that), middle-third
+  rate shapes inconsistent — what separated the populations was
+  **prefix motion**: every phantom carries its own downswing in the
+  track's 30 ms prefix (30.8–37.9 m/s), while merge-delayed real
+  flights birth out of silence or resting-ball rows (median 4.7 m/s).
+  Fix: anchoring now requires a QUIET prefix (≤8 m/s or absent); real
+  handoff suffixes with fast prefixes simply aren't anchored and face
+  the full fences as always. Plus locks now require a dense vanish tail
+  (≥2 detections in the last 60 ms) — a struck ball is full-RCS right
+  up to departure, so a sparse flickery tail (the physical spoof) earns
+  no lock. Re-run: **0/160 spoof phantoms**, and the standing sweep now
+  runs one spoof check per seed.
+- **Cranked dirt (falarm 2×, merge 0.85, body 1.0)**: one isolated
+  95 ms follow-through phantom at conf 0.88 (1/144). Not a cliff —
+  0 phantoms at 1×, 1.5×, and 3× falarm — a single unlucky assembly at
+  exactly 2× design. Documented tail, not chased (V-7's overfitting
+  lesson); the bay-side lever is `cfar_threshold_offset_db`.
+- **Clean under the rest of the gauntlet**: persistent teed ball under a
+  practice swing (no vanish → no lock → 0/40), junk persistent static
+  inside the tee zone (1 miss/288, 0 phantoms/144), two-ball scenes
+  (tee_range_m attributed to the HIT ball 20/20), out-of-band
+  placements 4 ft/8 ft (0 misses, 0 phantoms, ≤2.5 mph).
+
+**Final measured envelopes across 5–7 ft (20 seeds × 4 placements),
+post-M-8: real-shot misses 3/320 — all ONE seed** (driver seed 16, a
+merge-eats-everything draw whose tangled birth has fast prefix rows, so
+the M-8 prefix-quiet rule correctly refuses to relax fences for it;
+same residual class as V-7's accepted 1-in-20 chip fragmentation — not
+chased, per V-7's own overfitting lesson, and the trade against a
+confidence-0.95 phantom hole is obviously right). **Phantoms 0/160,
+swing failures 0/240** (~50% of 80–95 mph swings carry the
+fold-ambiguous flag — their raws genuinely touch the shoulder; 105/120
+unflagged), **M-1 leaks 0/20**. The sweep now cycles placements
+(`TEE_SWEEP`), runs a vanish-spoof check per seed, and the teed-ball
+static is on by default in every synthesized capture.
 
 ---
 

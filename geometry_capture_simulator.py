@@ -199,7 +199,9 @@ def synth_capture(ball_mph: float | None, club_mph: float,
                   t_impact: float = 0.15, t_end: float = 0.35,
                   body_p: float = 0.9, merge_p: float = 0.7,
                   falarm_p: float = 0.12,
-                  tee_y: float = 2.0, teeball_p: float = 0.45) -> list:
+                  tee_y: float = 2.0, teeball_p: float = 0.45,
+                  spoof_teeball: bool = False,
+                  extra_static: np.ndarray | None = None) -> list:
     """Build a Frame list like frames() would deliver — through the FULL
     hostile observation model (audit V-7), all of it on by default:
 
@@ -222,6 +224,13 @@ def synth_capture(ball_mph: float | None, club_mph: float,
     probability of the STATIC teed ball before impact -- deliberately
     weak/flickery (marginal SNR against the mat is a rung-3 bench
     question); it vanishes at impact. Only exists when ball_mph is set.
+
+    Adversarial knobs (audit M-8 gauntlet): spoof_teeball emits the teed-
+    ball static UP TO impact-time even when ball_mph is None -- the
+    malicious coincidence where a practice swing occludes/kills the
+    ball's return exactly when the club sweeps the tee, trying to buy an
+    anchored club-arc phantom. extra_static plants one more persistent
+    reflector anywhere (e.g. a range basket inside the tee zone).
     """
     rng = np.random.default_rng(seed)
     club_mps = club_mph * MPH_TO_MPS
@@ -230,6 +239,8 @@ def synth_capture(ball_mph: float | None, club_mph: float,
     n_frames = int(t_end * FRAME_HZ)
     statics = [np.array([0.6, 5.2, -0.1]),
                np.array([-0.9, 2.3 + dy, -0.25])]
+    if extra_static is not None:
+        statics.append(np.asarray(extra_static, dtype=float))
     tee_pos = TEE_WORLD + np.array([0.0, dy, 0.0])
     # Golfer's torso: ~0.85 m toward the golfer side of the target line,
     # centered near hip height. Sways at ~1.2 Hz; the downswing adds a
@@ -267,7 +278,7 @@ def synth_capture(ball_mph: float | None, club_mph: float,
             if ob:
                 pts.append([*ob[0], ob[1]])
         # -- teed ball: a weak static return at the tee until impact
-        if (ball_mph is not None and t_true < t_impact
+        if ((ball_mph is not None or spoof_teeball) and t_true < t_impact
                 and rng.uniform() < teeball_p):
             ob = observe(world_to_sensor(tee_pos), rng.normal(0.0, 0.03), rng)
             if ob:
@@ -566,8 +577,16 @@ def sweep(n_seeds: int = 6) -> bool:
                 fails += 1
                 print(f"  FAIL seed {seed}: ball ({ball} mph) published "
                       f"as swing")
+        # Vanish-spoof (audit M-8): a practice swing over a teed ball whose
+        # return dies at exactly club-passage must never buy an anchored
+        # arc phantom (prefix-quiet anchoring + clean-vanish lock rule).
+        if src.analyze(synth_capture(None, 105.0, 0.0, 0.0, seed=seed,
+                                     tee_y=tee_y,
+                                     spoof_teeball=True)) is not None:
+            fails += 1
+            print(f"  FAIL seed {seed}: vanish-spoof phantom")
     print(f"[sweep] {n_seeds} seeds x {len(SCENARIOS)} scenarios "
-          f"+ {len(SWING_SPEEDS) + 3} swing checks: {fails} failures")
+          f"+ {len(SWING_SPEEDS) + 4} swing/spoof checks: {fails} failures")
     return fails == 0
 
 

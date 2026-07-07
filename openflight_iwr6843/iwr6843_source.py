@@ -641,6 +641,14 @@ class IWR6843Source:
                 continue
             if t_end - t_last < 0.035:         # never vanished: wall/box
                 continue
+            # The vanish must be CLEAN (audit M-8): a ball that is truly
+            # struck is a full-RCS reflector right up to the moment it
+            # leaves, so detections crowd the vanish. A marginal flickery
+            # return whose last detection merely falls early by chance --
+            # the physical version of the vanish-spoof -- has a sparse
+            # tail and earns no lock.
+            if (grp[:, 0] >= t_last - 0.06).sum() < 2:
+                continue
             locks.append((pos, t_last))
         return locks
 
@@ -738,12 +746,26 @@ class IWR6843Source:
                     # 0.90 m radius: impact merge can hide the first
                     # visible flight row for many frames at driver speed
                     # (measured worst case: birth 0.82 m downrange of the
-                    # tee). The vanish-time window is what keeps the
-                    # anchor honest -- a suffix must be born within
-                    # [-30, +60] ms of the resting ball's disappearance,
-                    # which nothing but the shot that removed it can
-                    # arrange.
-                    anchored = any(
+                    # tee). Two conditions keep the anchor honest against
+                    # the vanish-spoof (audit M-8: a practice swing over a
+                    # ball whose return dies at club-passage bought 4/160
+                    # anchored arc phantoms, one at conf 0.95): the birth
+                    # must sit in the vanish window [-30, +60] ms, AND the
+                    # track's own 30 ms prefix must be QUIET (<= 8 m/s:
+                    # resting-ball rows or nothing). A merge-delayed real
+                    # flight births out of silence -- the club it left
+                    # behind is a different track at the tee -- while an
+                    # arc-bottom sweep always carries its own downswing in
+                    # the prefix (measured 30.8-37.9 m/s on every spoof
+                    # phantom vs median 4.7 on real anchor candidates).
+                    # Real handoff suffixes DO have fast prefixes, but
+                    # they never need the relaxation; they just aren't
+                    # anchored and face the full fences as always.
+                    pre = tr[:st]
+                    pre = pre[(tr[st, 0] - pre[:, 0]) <= 0.030]
+                    prefix_quiet = (pre.shape[0] == 0
+                                    or float(np.abs(pre[:, 4]).max()) <= 8.0)
+                    anchored = prefix_quiet and any(
                         np.linalg.norm(p_st - lp) <= 0.90
                         and (tg - 0.03) <= tr[st, 0] <= (tg + 0.06)
                         for lp, tg in locks)
