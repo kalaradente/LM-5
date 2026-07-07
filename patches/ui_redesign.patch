@@ -1279,10 +1279,10 @@ index c002c6e..880c731 100644
    );
 diff --git a/ui/src/components/BallTracer.css b/ui/src/components/BallTracer.css
 new file mode 100644
-index 0000000..1f6d6c5
+index 0000000..c5384ee
 --- /dev/null
 +++ b/ui/src/components/BallTracer.css
-@@ -0,0 +1,224 @@
+@@ -0,0 +1,292 @@
 +/* Ball Tracer — virtual range panel in the Live view.
 +   Same instrument vocabulary as the metric modules: bordered surface,
 +   tracked label header, mono readouts. The range itself is drawn in
@@ -1419,19 +1419,44 @@ index 0000000..1f6d6c5
 +  display: block;
 +  width: 100%;
 +  height: auto;
-+  max-height: 46vh;
++  max-height: 58vh;
++}
++
++.ball-tracer__rough {
++  fill: var(--surface);
++}
++
++.ball-tracer__horizon {
++  stroke: var(--border-strong);
++  stroke-width: 1;
 +}
 +
 +.ball-tracer__fairway {
 +  fill: var(--surface-2);
++}
++
++/* Alternating mow bands between yardage lines — depth cue, kept subtle */
++.ball-tracer__stripe {
++  fill: var(--surface-3);
++  opacity: 0.45;
++}
++
++.ball-tracer__edge {
++  fill: none;
 +  stroke: var(--border-strong);
-+  stroke-width: 1;
++  stroke-width: 1.5;
 +}
 +
 +.ball-tracer__centerline {
 +  stroke: var(--border);
 +  stroke-width: 1;
 +  stroke-dasharray: 6 8;
++}
++
++.ball-tracer__tee {
++  fill: var(--surface-3);
++  stroke: var(--border-strong);
++  stroke-width: 1;
 +}
 +
 +.ball-tracer__distline {
@@ -1442,11 +1467,37 @@ index 0000000..1f6d6c5
 +.ball-tracer__distlabel {
 +  font-family: var(--font-mono);
 +  letter-spacing: 0.04em;
-+  fill: var(--ink-muted);
++  fill: var(--ink-secondary);
++  /* Halo so labels stay legible over the stripes */
++  paint-order: stroke;
++  stroke: var(--surface);
++  stroke-width: 3px;
 +}
 +
 +.ball-tracer__landing {
 +  fill: var(--accent-text);
++}
++
++/* One expanding pulse at the landing spot, timed to the trace draw-in.
++   Starts invisible: under prefers-reduced-motion the animation collapses
++   and the ring simply never shows. */
++.ball-tracer__ring {
++  fill: none;
++  stroke: var(--accent-text);
++  stroke-width: 2;
++  opacity: 0;
++  animation: tracer-ring 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.85s;
++}
++
++@keyframes tracer-ring {
++  0% {
++    opacity: 0.7;
++    r: 3;
++  }
++  100% {
++    opacity: 0;
++    r: 18;
++  }
 +}
 +
 +/* Prior traces: present but quiet, so the dispersion story reads without
@@ -1471,6 +1522,18 @@ index 0000000..1f6d6c5
 +  animation: tracer-draw 0.9s cubic-bezier(0.22, 1, 0.36, 1);
 +}
 +
++/* Soft light under the live trace so it reads over the range dressing */
++.ball-tracer__trace-glow {
++  fill: none;
++  stroke: var(--accent-text);
++  stroke-width: 6;
++  stroke-linecap: round;
++  opacity: 0.35;
++  stroke-dasharray: 1;
++  stroke-dashoffset: 0;
++  animation: tracer-draw 0.9s cubic-bezier(0.22, 1, 0.36, 1);
++}
++
 +@keyframes tracer-draw {
 +  from {
 +    stroke-dashoffset: 1;
@@ -1483,14 +1546,19 @@ index 0000000..1f6d6c5
 +.ball-tracer__marker {
 +  font-family: var(--font-mono);
 +  font-variant-numeric: tabular-nums;
-+  font-size: 12px;
++  font-size: 13px;
 +  letter-spacing: 0.04em;
 +  fill: var(--ink);
++  /* Halo keeps the numbers legible over sky, stripes, and traces */
++  paint-order: stroke;
++  stroke: var(--bg);
++  stroke-width: 3.5px;
 +}
 +
 +.ball-tracer__marker--carry {
 +  fill: var(--accent-text);
 +  font-weight: 600;
++  font-size: 14px;
 +}
 +
 +.ball-tracer__hint {
@@ -1504,7 +1572,7 @@ index 0000000..1f6d6c5
 +/* Compact 7" kiosk: the stage cedes height to the metric grid */
 +@media (max-height: 500px) {
 +  .ball-tracer__svg {
-+    max-height: 34vh;
++    max-height: 36vh;
 +  }
 +}
 diff --git a/ui/src/components/BallTracer.test.tsx b/ui/src/components/BallTracer.test.tsx
@@ -1620,15 +1688,25 @@ index 0000000..15a0fb3
 +});
 diff --git a/ui/src/components/BallTracer.tsx b/ui/src/components/BallTracer.tsx
 new file mode 100644
-index 0000000..d9e0527
+index 0000000..c67cda1
 --- /dev/null
 +++ b/ui/src/components/BallTracer.tsx
-@@ -0,0 +1,248 @@
+@@ -0,0 +1,320 @@
 +import type { Shot } from '../types/shot';
 +import type { CameraStatus } from '../stores/useCameraStore';
 +import { useTracerPreference } from '../state/useTracerPreference';
 +import type { TracerHistory } from '../stores/useTracerPreferenceStore';
 +import { PEAK_HEIGHT_UNIT, formatPeakHeight } from '../utils/units';
++import {
++  FAIRWAY_NEAR_X,
++  HALF_WIDTH,
++  RANGE_DEPTH,
++  VIEW_H,
++  VIEW_W,
++  V_HORIZON,
++  polylineFrom,
++  project,
++} from '../utils/tracerProjection';
 +import './BallTracer.css';
 +
 +/**
@@ -1637,29 +1715,32 @@ index 0000000..d9e0527
 + * server's RK4 flight path (the same physics that produces spin-adjusted
 + * carry); shots without resolvable launch data draw nothing.
 + *
-+ * Range geometry: fairway 50 yds wide (edges at ±25) with distance lines
-+ * every 50 yds, deep enough (420 yds) for any carry the pipeline can
-+ * produce. Simple pinhole projection from a camera 7 yds behind the tee at
-+ * eye height.
++ * Range dressing (sky band, mow stripes, rough, tee mat) is drawn entirely
++ * in design-system tokens so it holds up in both themes; the stripes double
++ * as depth cues between the yardage lines.
 + */
 +
-+import {
-+  FAIRWAY_NEAR_X,
-+  HALF_WIDTH,
-+  RANGE_DEPTH,
-+  VIEW_H,
-+  VIEW_W,
-+  polylineFrom,
-+  project,
-+} from '../utils/tracerProjection';
-+
-+const DISTANCE_LINES = [50, 100, 150, 200, 250, 300, 350, 400];
++// Yardage lines: tight near-field reads (10, 25), then every 50 to 400.
++const DISTANCE_MARKS = [10, 25, 50, 100, 150, 200, 250, 300, 350, 400];
++// Mow-stripe band boundaries (tee → beyond the last line).
++const BAND_EDGES = [0, ...DISTANCE_MARKS, RANGE_DEPTH];
 +
 +const HISTORY_OPTIONS: { id: TracerHistory; label: string }[] = [
 +  { id: 'all', label: 'All' },
 +  { id: 'last5', label: '5' },
 +  { id: 'latest', label: 'Last' },
 +];
++
++function groundPoly(fromX: number, toX: number): string {
++  return [
++    project(fromX, -HALF_WIDTH, 0),
++    project(toX, -HALF_WIDTH, 0),
++    project(toX, HALF_WIDTH, 0),
++    project(fromX, HALF_WIDTH, 0),
++  ]
++    .map((p) => `${p.u.toFixed(1)},${p.v.toFixed(1)}`)
++    .join(' ');
++}
 +
 +interface BallTracerProps {
 +  shots: Shot[];
@@ -1697,11 +1778,11 @@ index 0000000..d9e0527
 +  const landing = latestTraj?.points[latestTraj.points.length - 1];
 +  const landingPoint = landing ? project(landing[0], landing[1], 0) : null;
 +
-+  const fairway = [
-+    project(FAIRWAY_NEAR_X, -HALF_WIDTH, 0),
-+    project(RANGE_DEPTH, -HALF_WIDTH, 0),
-+    project(RANGE_DEPTH, HALF_WIDTH, 0),
-+    project(FAIRWAY_NEAR_X, HALF_WIDTH, 0),
++  const teeMat = [
++    project(-2.5, -2.5, 0),
++    project(1.5, -2.5, 0),
++    project(1.5, 2.5, 0),
++    project(-2.5, 2.5, 0),
 +  ]
 +    .map((p) => `${p.u.toFixed(1)},${p.v.toFixed(1)}`)
 +    .join(' ');
@@ -1766,12 +1847,44 @@ index 0000000..d9e0527
 +            role="img"
 +            aria-label={
 +              latestTraj
-+                ? `Flight path: ${latestTraj.carry_yards} yards carry, apex ${latestTraj.apex_yards} yards`
++                ? `Flight path: ${latestTraj.carry_yards} yards carry, apex ${formatPeakHeight(latestTraj.apex_yards)} feet`
 +                : 'Virtual range, awaiting a shot'
 +            }
 +          >
++            <defs>
++              {/* Sky: deep body tone warming faintly toward the horizon */}
++              <linearGradient id="tracer-sky" x1="0" y1="0" x2="0" y2="1">
++                <stop offset="0" style={{ stopColor: 'var(--bg)' }} />
++                <stop offset="1" style={{ stopColor: 'var(--accent-wash)' }} />
++              </linearGradient>
++              <filter id="tracer-glow" x="-20%" y="-20%" width="140%" height="140%">
++                <feGaussianBlur stdDeviation="3" />
++              </filter>
++            </defs>
++
++            {/* Sky band */}
++            <rect className="ball-tracer__sky" x="0" y="0" width={VIEW_W} height={V_HORIZON} fill="url(#tracer-sky)" />
++            {/* Rough — everything on the ground that isn't fairway */}
++            <rect className="ball-tracer__rough" x="0" y={V_HORIZON} width={VIEW_W} height={VIEW_H - V_HORIZON} />
++            <line className="ball-tracer__horizon" x1="0" y1={V_HORIZON} x2={VIEW_W} y2={V_HORIZON} />
++
 +            {/* Fairway — 50 yds wide, receding to the horizon */}
-+            <polygon className="ball-tracer__fairway" points={fairway} />
++            <polygon className="ball-tracer__fairway" points={groundPoly(FAIRWAY_NEAR_X, RANGE_DEPTH)} />
++            {/* Mow stripes between yardage lines: depth cues, alternating */}
++            {BAND_EDGES.slice(0, -1).map((from, i) =>
++              i % 2 === 1 ? (
++                <polygon key={from} className="ball-tracer__stripe" points={groundPoly(from, BAND_EDGES[i + 1])} />
++              ) : null,
++            )}
++            {/* Fairway edges */}
++            <polyline
++              className="ball-tracer__edge"
++              points={`${project(FAIRWAY_NEAR_X, -HALF_WIDTH, 0).u},${project(FAIRWAY_NEAR_X, -HALF_WIDTH, 0).v} ${project(RANGE_DEPTH, -HALF_WIDTH, 0).u},${project(RANGE_DEPTH, -HALF_WIDTH, 0).v}`}
++            />
++            <polyline
++              className="ball-tracer__edge"
++              points={`${project(FAIRWAY_NEAR_X, HALF_WIDTH, 0).u},${project(FAIRWAY_NEAR_X, HALF_WIDTH, 0).v} ${project(RANGE_DEPTH, HALF_WIDTH, 0).u},${project(RANGE_DEPTH, HALF_WIDTH, 0).v}`}
++            />
 +
 +            {/* Center aim line */}
 +            <line
@@ -1782,13 +1895,16 @@ index 0000000..d9e0527
 +              y2={project(RANGE_DEPTH, 0, 0).v}
 +            />
 +
-+            {/* Distance lines every 50 yds. Labels scale with depth and stop
-+                at 150 — farther labels would converge into an unreadable
-+                clump at the vanishing point; the lines alone carry depth. */}
-+            {DISTANCE_LINES.map((yds) => {
++            {/* Tee mat */}
++            <polygon className="ball-tracer__tee" points={teeMat} />
++
++            {/* Yardage lines: 10, 25, then every 50 to 400. Labels flank
++                both edges up to 150, right side to 250; beyond that the
++                lines alone carry depth (labels would converge). */}
++            {DISTANCE_MARKS.map((yds) => {
 +              const left = project(yds, -HALF_WIDTH, 0);
 +              const right = project(yds, HALF_WIDTH, 0);
-+              const labelSize = Math.max(9, Math.min(14, 900 / (yds + 7)));
++              const labelSize = Math.max(9, Math.min(14, 950 / (yds + 12)));
 +              return (
 +                <g key={yds}>
 +                  <line
@@ -1798,12 +1914,23 @@ index 0000000..d9e0527
 +                    x2={right.u}
 +                    y2={right.v}
 +                  />
-+                  {yds <= 150 && (
++                  {yds <= 250 && (
 +                    <text
 +                      className="ball-tracer__distlabel"
-+                      x={right.u + 5}
++                      x={right.u + 6}
 +                      y={right.v + labelSize / 3}
 +                      fontSize={labelSize}
++                    >
++                      {yds}
++                    </text>
++                  )}
++                  {yds >= 50 && yds <= 150 && (
++                    <text
++                      className="ball-tracer__distlabel"
++                      x={left.u - 6}
++                      y={left.v + labelSize / 3}
++                      fontSize={labelSize}
++                      textAnchor="end"
 +                    >
 +                      {yds}
 +                    </text>
@@ -1821,26 +1948,29 @@ index 0000000..d9e0527
 +              />
 +            ))}
 +
-+            {/* Latest trace — draw-in keyed to the shot so it replays */}
++            {/* Latest trace — soft glow under a bright draw-in stroke,
++                keyed to the shot so it replays */}
 +            {latestTraj && (
 +              <g key={latestShot!.timestamp}>
++                <polyline
++                  className="ball-tracer__trace-glow"
++                  points={polylineFrom(latestTraj.points)}
++                  pathLength={1}
++                  filter="url(#tracer-glow)"
++                />
 +                <polyline
 +                  className="ball-tracer__trace"
 +                  points={polylineFrom(latestTraj.points)}
 +                  pathLength={1}
 +                />
-+                {apexPoint && (
-+                  <text
-+                    className="ball-tracer__marker"
-+                    x={apexPoint.u}
-+                    y={apexPoint.v - 8}
-+                    textAnchor="middle"
-+                  >
-+                    ▴ {formatPeakHeight(latestTraj.apex_yards)} {PEAK_HEIGHT_UNIT}
-+                  </text>
-+                )}
 +                {landingPoint && (
 +                  <>
++                    <circle
++                      className="ball-tracer__ring"
++                      cx={landingPoint.u}
++                      cy={landingPoint.v}
++                      r={3}
++                    />
 +                    <circle
 +                      className="ball-tracer__landing"
 +                      cx={landingPoint.u}
@@ -1850,12 +1980,22 @@ index 0000000..d9e0527
 +                    <text
 +                      className="ball-tracer__marker ball-tracer__marker--carry"
 +                      x={landingPoint.u}
-+                      y={landingPoint.v - 8}
++                      y={landingPoint.v - 10}
 +                      textAnchor="middle"
 +                    >
 +                      {Math.round(latestTraj.carry_yards)} yds
 +                    </text>
 +                  </>
++                )}
++                {apexPoint && (
++                  <text
++                    className="ball-tracer__marker"
++                    x={apexPoint.u}
++                    y={apexPoint.v - 8}
++                    textAnchor="middle"
++                  >
++                    ▴ {formatPeakHeight(latestTraj.apex_yards)} {PEAK_HEIGHT_UNIT}
++                  </text>
 +                )}
 +              </g>
 +            )}
@@ -7028,10 +7168,10 @@ index 7d347ff..25ebb5b 100644
  
 diff --git a/ui/src/utils/tracerProjection.ts b/ui/src/utils/tracerProjection.ts
 new file mode 100644
-index 0000000..1de8012
+index 0000000..cb9f4fc
 --- /dev/null
 +++ b/ui/src/utils/tracerProjection.ts
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,53 @@
 +/* Stylized behind-the-golfer projection for the ball tracer.
 +   World frame: x downrange, y lateral (+right), z up — all yards.
 +
@@ -7045,18 +7185,20 @@ index 0000000..1de8012
 +   higher apex always draws visibly taller. */
 +
 +export const VIEW_W = 720;
-+export const VIEW_H = 400;
++export const VIEW_H = 460;
 +export const RANGE_DEPTH = 420; // yards — beyond any real carry
 +export const HALF_WIDTH = 25; // yards — 50 yd wide fairway
 +// Fairway's near edge extends toward the viewer so the foreground is
 +// ground, not void (maps just past the bottom of the frame).
 +export const FAIRWAY_NEAR_X = -3.5;
 +
-+const V_NEAR = 395; // screen v of the ground at the tee (x = 0)
-+const V_HORIZON = 110; // screen v the fairway converges toward
++const V_NEAR = 452; // screen v of the ground at the tee (x = 0)
++export const V_HORIZON = 120; // screen v the fairway converges toward
 +const W_NEAR = 330; // half-width in px of the fairway at the tee
 +const W_FAR = 26; // half-width in px at RANGE_DEPTH
-+const HEIGHT_FACTOR = 0.6; // arc emphasis relative to local lateral scale
++// Arc emphasis relative to local lateral scale: high enough that a full
++// flight soars past the horizon line into the sky band.
++const HEIGHT_FACTOR = 0.9;
 +
 +/** Signed sqrt depth parameter: 0 at the tee, 1 at RANGE_DEPTH. */
 +function depthT(x: number): number {
