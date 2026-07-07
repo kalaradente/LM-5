@@ -914,7 +914,7 @@ index 9dc7fcd..e3d6b38 100644
 -  overflow: visible;
 -}
 diff --git a/ui/src/App.tsx b/ui/src/App.tsx
-index 7fecac0..02d265a 100644
+index 7fecac0..797cfd1 100644
 --- a/ui/src/App.tsx
 +++ b/ui/src/App.tsx
 @@ -18,15 +18,17 @@ import { ClubPicker } from './components/ClubPicker';
@@ -1113,13 +1113,18 @@ index 7fecac0..02d265a 100644
              <p>Shut down OpenFlight?</p>
              <div className="shutdown-dialog__buttons">
                <button className="shutdown-dialog__confirm" onClick={() => { shutdown(); setShowShutdown(false); }}>
-@@ -291,7 +337,10 @@ function AppContent() {
+@@ -291,7 +337,15 @@ function AppContent() {
              {sessionMode === 'speed' ? (
                <SwingDisplay shots={shots} latestShot={latestShot} animate={isNewShot} />
              ) : (
 -              <ShotDisplay shot={latestShot} animate={isNewShot} />
 +              <>
-+                <BallTracer shots={shots} latestShot={latestBallShot} cameraStatus={cameraStatus} />
++                <BallTracer
++                  shots={shots}
++                  latestShot={latestBallShot}
++                  cameraStatus={cameraStatus}
++                  selectedClub={selectedClub}
++                />
 +                <ShotDisplay shot={latestBallShot} animate={isNewShot} />
 +              </>
              )}
@@ -1279,10 +1284,10 @@ index c002c6e..880c731 100644
    );
 diff --git a/ui/src/components/BallTracer.css b/ui/src/components/BallTracer.css
 new file mode 100644
-index 0000000..c5384ee
+index 0000000..1c98abf
 --- /dev/null
 +++ b/ui/src/components/BallTracer.css
-@@ -0,0 +1,292 @@
+@@ -0,0 +1,328 @@
 +/* Ball Tracer — virtual range panel in the Live view.
 +   Same instrument vocabulary as the metric modules: bordered surface,
 +   tracked label header, mono readouts. The range itself is drawn in
@@ -1408,6 +1413,32 @@ index 0000000..c5384ee
 +  color: var(--ink);
 +}
 +
++/* Clear the drawn traces (display only; the session is untouched) */
++.ball-tracer__clear {
++  border: 1px solid var(--border-strong);
++  border-radius: var(--radius-md);
++  background: transparent;
++  color: var(--ink-secondary);
++  padding: 0.2rem 0.5rem;
++  min-height: 26px;
++  font-size: var(--text-xs);
++  font-weight: 600;
++  letter-spacing: 0.06em;
++  text-transform: uppercase;
++  cursor: pointer;
++  transition: border-color var(--transition-fast), color var(--transition-fast);
++}
++
++.ball-tracer__clear:hover:not(:disabled) {
++  border-color: var(--accent-border);
++  color: var(--ink);
++}
++
++.ball-tracer__clear:disabled {
++  opacity: 0.4;
++  cursor: default;
++}
++
 +/* ---- The range ---- */
 +
 +.ball-tracer__stage {
@@ -1476,6 +1507,20 @@ index 0000000..c5384ee
 +
 +.ball-tracer__landing {
 +  fill: var(--accent-text);
++}
++
++/* Landed outside the 50-yd fairway: dot goes warn-colored and the carry
++   marker says "rough" in words — never color alone. */
++.ball-tracer__landing--rough {
++  fill: var(--warn);
++}
++
++/* Ground dimension: "25 yd" on each half of the fairway near the tee */
++.ball-tracer__width-label {
++  font-family: var(--font-mono);
++  font-size: 11px;
++  letter-spacing: 0.06em;
++  fill: var(--ink-muted);
 +}
 +
 +/* One expanding pulse at the landing spot, timed to the trace draw-in.
@@ -1549,10 +1594,6 @@ index 0000000..c5384ee
 +  font-size: 13px;
 +  letter-spacing: 0.04em;
 +  fill: var(--ink);
-+  /* Halo keeps the numbers legible over sky, stripes, and traces */
-+  paint-order: stroke;
-+  stroke: var(--bg);
-+  stroke-width: 3.5px;
 +}
 +
 +.ball-tracer__marker--carry {
@@ -1577,10 +1618,10 @@ index 0000000..c5384ee
 +}
 diff --git a/ui/src/components/BallTracer.test.tsx b/ui/src/components/BallTracer.test.tsx
 new file mode 100644
-index 0000000..15a0fb3
+index 0000000..66173b7
 --- /dev/null
 +++ b/ui/src/components/BallTracer.test.tsx
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,150 @@
 +import { renderToString } from 'react-dom/server';
 +import { describe, expect, it } from 'vitest';
 +import type { CameraStatus } from '../stores/useCameraStore';
@@ -1664,34 +1705,80 @@ index 0000000..15a0fb3
 +describe('BallTracer', () => {
 +  it('draws the trace with apex and carry markers', () => {
 +    const html = renderPlain(
-+      <BallTracer shots={[tracedShot]} latestShot={tracedShot} cameraStatus={cameraOff} />,
++      <BallTracer shots={[tracedShot]} latestShot={tracedShot} cameraStatus={cameraOff} selectedClub="driver" />,
 +    );
 +    expect(html).toContain('ball-tracer__trace');
 +    // Peak height is always feet: 31.5 yd apex = 94.5 ft → 95 ft
 +    expect(html).toContain('▴ 95 ft');
 +    expect(html).toContain('251 yds');
++    // On the fairway: no rough call on the carry marker, no warn dot
++    expect(html).not.toContain('· rough');
++    expect(html).not.toContain('ball-tracer__landing--rough');
++  });
++
++  it('labels out-of-fairway landings as rough (word + warn dot)', () => {
++    const sliced = makeShot({
++      trajectory: {
++        points: [
++          [0, 0, 0],
++          [120, 15, 28],
++          [230, 32, 0],
++        ],
++        apex_yards: 30,
++        carry_yards: 230,
++        lateral_yards: 32, // beyond the ±25 yd fairway
++      },
++    });
++    const html = renderPlain(
++      <BallTracer shots={[sliced]} latestShot={sliced} cameraStatus={cameraOff} selectedClub="driver" />,
++    );
++    expect(html).toContain('230 yds · rough');
++    expect(html).toContain('ball-tracer__landing--rough');
++  });
++
++  it('numbers the yardage lines on both edges, 10/25 then 50s to 400', () => {
++    const html = renderPlain(
++      <BallTracer shots={[]} latestShot={null} cameraStatus={cameraOff} selectedClub="driver" />,
++    );
++    for (const yds of [10, 25, 50, 100, 150, 200, 250, 300, 350, 400]) {
++      const matches = html.match(new RegExp(`>${yds}</text>`, 'g')) ?? [];
++      expect(matches.length, `yardage ${yds} labeled on both edges`).toBe(2);
++    }
++    // Width dimension on each fairway half
++    expect((html.match(/25 yd</g) ?? []).length).toBe(2);
++  });
++
++  it('offers a clear control for the drawn traces', () => {
++    const html = renderPlain(
++      <BallTracer shots={[tracedShot]} latestShot={tracedShot} cameraStatus={cameraOff} selectedClub="driver" />,
++    );
++    expect(html).toContain('ball-tracer__clear');
++    expect(html).toContain('Clear');
 +  });
 +
 +  it('shows an honest hint when the shot has no flight data', () => {
 +    const bare = makeShot({ trajectory: null });
 +    const html = renderPlain(
-+      <BallTracer shots={[bare]} latestShot={bare} cameraStatus={cameraOff} />,
++      <BallTracer shots={[bare]} latestShot={bare} cameraStatus={cameraOff} selectedClub="driver" />,
 +    );
 +    expect(html).toContain('no flight data for last shot');
 +    expect(html).not.toContain('ball-tracer__trace"');
 +  });
 +
 +  it('shows the awaiting state before any shot', () => {
-+    const html = renderPlain(<BallTracer shots={[]} latestShot={null} cameraStatus={cameraOff} />);
++    const html = renderPlain(
++      <BallTracer shots={[]} latestShot={null} cameraStatus={cameraOff} selectedClub="driver" />,
++    );
 +    expect(html).toContain('awaiting first shot');
 +  });
 +});
 diff --git a/ui/src/components/BallTracer.tsx b/ui/src/components/BallTracer.tsx
 new file mode 100644
-index 0000000..c67cda1
+index 0000000..bb351a7
 --- /dev/null
 +++ b/ui/src/components/BallTracer.tsx
-@@ -0,0 +1,320 @@
+@@ -0,0 +1,359 @@
++import { useEffect, useRef, useState } from 'react';
 +import type { Shot } from '../types/shot';
 +import type { CameraStatus } from '../stores/useCameraStore';
 +import { useTracerPreference } from '../state/useTracerPreference';
@@ -1715,9 +1802,10 @@ index 0000000..c67cda1
 + * server's RK4 flight path (the same physics that produces spin-adjusted
 + * carry); shots without resolvable launch data draw nothing.
 + *
-+ * Range dressing (sky band, mow stripes, rough, tee mat) is drawn entirely
-+ * in design-system tokens so it holds up in both themes; the stripes double
-+ * as depth cues between the yardage lines.
++ * The range is 50 yds of fairway (25 each side of the aim line, and the
++ * width is dimensioned on the ground) inside full-width rough: shots that
++ * leave the fairway land in the rough and are labeled as such. Traces can
++ * be cleared manually and reset automatically when the club changes.
 + */
 +
 +// Yardage lines: tight near-field reads (10, 25), then every 50 to 400.
@@ -1747,24 +1835,45 @@ index 0000000..c67cda1
 +  /** Latest ball shot (never a speed-training swing). */
 +  latestShot: Shot | null;
 +  cameraStatus: CameraStatus;
++  /** Currently selected club — a change auto-clears the drawn traces. */
++  selectedClub: string;
 +}
 +
-+export function BallTracer({ shots, latestShot, cameraStatus }: BallTracerProps) {
++export function BallTracer({ shots, latestShot, cameraStatus, selectedClub }: BallTracerProps) {
 +  const { folded, history, setFolded, setHistory } = useTracerPreference();
 +
-+  const latestTraj = latestShot?.trajectory ?? null;
++  // Traces drawn = shots hit since the last clear. Clearing is a display
++  // action only — the session (stats, ledger) is untouched.
++  const [clearIndex, setClearIndex] = useState(0);
++  const prevClub = useRef(selectedClub);
++  useEffect(() => {
++    if (prevClub.current !== selectedClub) {
++      prevClub.current = selectedClub;
++      setClearIndex(shots.length);
++    }
++    // eslint-disable-next-line react-hooks/exhaustive-deps -- shots.length is read, not a trigger: only a club change clears
++  }, [selectedClub]);
++  // Session cleared underneath us (shots array shrank): show everything again.
++  const effectiveClearIndex = clearIndex > shots.length ? 0 : clearIndex;
++
++  const visibleShots = shots.slice(effectiveClearIndex);
++  const latestVisible =
++    latestShot !== null && visibleShots.some((s) => s.timestamp === latestShot.timestamp)
++      ? latestShot
++      : null;
++  const latestTraj = latestVisible?.trajectory ?? null;
 +
 +  // Prior traces per the history setting (latest excluded — it gets the
 +  // bright animated stroke).
 +  const priorTraces =
 +    history === 'latest'
 +      ? []
-+      : shots
++      : visibleShots
 +          .filter(
 +            (s) =>
 +              s.mode !== 'speed-training' &&
 +              s.trajectory &&
-+              s.timestamp !== latestShot?.timestamp,
++              s.timestamp !== latestVisible?.timestamp,
 +          )
 +          .slice(history === 'last5' ? -5 : 0)
 +          .map((s) => s.trajectory!);
@@ -1777,6 +1886,8 @@ index 0000000..c67cda1
 +  }
 +  const landing = latestTraj?.points[latestTraj.points.length - 1];
 +  const landingPoint = landing ? project(landing[0], landing[1], 0) : null;
++  // Off the 50-yd fairway = in the rough. Said with a word, not color alone.
++  const landedInRough = latestTraj !== null && Math.abs(latestTraj.lateral_yards) > HALF_WIDTH;
 +
 +  const teeMat = [
 +    project(-2.5, -2.5, 0),
@@ -1826,6 +1937,15 @@ index 0000000..c67cda1
 +          </div>
 +          <button
 +            type="button"
++            className="ball-tracer__clear"
++            onClick={() => setClearIndex(shots.length)}
++            disabled={visibleShots.length === 0}
++            title="Clear the drawn traces (session data is untouched)"
++          >
++            Clear
++          </button>
++          <button
++            type="button"
 +            className="ball-tracer__fold"
 +            onClick={() => setFolded(!folded)}
 +            aria-expanded={!folded}
@@ -1847,7 +1967,7 @@ index 0000000..c67cda1
 +            role="img"
 +            aria-label={
 +              latestTraj
-+                ? `Flight path: ${latestTraj.carry_yards} yards carry, apex ${formatPeakHeight(latestTraj.apex_yards)} feet`
++                ? `Flight path: ${latestTraj.carry_yards} yards carry, apex ${formatPeakHeight(latestTraj.apex_yards)} feet${landedInRough ? ', landed in the rough' : ''}`
 +                : 'Virtual range, awaiting a shot'
 +            }
 +          >
@@ -1864,7 +1984,8 @@ index 0000000..c67cda1
 +
 +            {/* Sky band */}
 +            <rect className="ball-tracer__sky" x="0" y="0" width={VIEW_W} height={V_HORIZON} fill="url(#tracer-sky)" />
-+            {/* Rough — everything on the ground that isn't fairway */}
++            {/* Rough — the ground beyond the fairway. Full width: off-line
++                shots land here, drawn and labeled, never clipped. */}
 +            <rect className="ball-tracer__rough" x="0" y={V_HORIZON} width={VIEW_W} height={VIEW_H - V_HORIZON} />
 +            <line className="ball-tracer__horizon" x1="0" y1={V_HORIZON} x2={VIEW_W} y2={V_HORIZON} />
 +
@@ -1895,12 +2016,20 @@ index 0000000..c67cda1
 +              y2={project(RANGE_DEPTH, 0, 0).v}
 +            />
 +
++            {/* Width dimension: each half of the fairway is 25 yds from the
++                aim line to the edge, marked on the ground near the tee. */}
++            <text className="ball-tracer__width-label" x={project(6.5, -12.5, 0).u} y={project(6.5, -12.5, 0).v} textAnchor="middle">
++              25 yd
++            </text>
++            <text className="ball-tracer__width-label" x={project(6.5, 12.5, 0).u} y={project(6.5, 12.5, 0).v} textAnchor="middle">
++              25 yd
++            </text>
++
 +            {/* Tee mat */}
 +            <polygon className="ball-tracer__tee" points={teeMat} />
 +
-+            {/* Yardage lines: 10, 25, then every 50 to 400. Labels flank
-+                both edges up to 150, right side to 250; beyond that the
-+                lines alone carry depth (labels would converge). */}
++            {/* Yardage lines: 10, 25, then every 50 to 400 — numbered on
++                BOTH edges the whole way down, sized by depth. */}
 +            {DISTANCE_MARKS.map((yds) => {
 +              const left = project(yds, -HALF_WIDTH, 0);
 +              const right = project(yds, HALF_WIDTH, 0);
@@ -1914,27 +2043,23 @@ index 0000000..c67cda1
 +                    x2={right.u}
 +                    y2={right.v}
 +                  />
-+                  {yds <= 250 && (
-+                    <text
-+                      className="ball-tracer__distlabel"
-+                      x={right.u + 6}
-+                      y={right.v + labelSize / 3}
-+                      fontSize={labelSize}
-+                    >
-+                      {yds}
-+                    </text>
-+                  )}
-+                  {yds >= 50 && yds <= 150 && (
-+                    <text
-+                      className="ball-tracer__distlabel"
-+                      x={left.u - 6}
-+                      y={left.v + labelSize / 3}
-+                      fontSize={labelSize}
-+                      textAnchor="end"
-+                    >
-+                      {yds}
-+                    </text>
-+                  )}
++                  <text
++                    className="ball-tracer__distlabel"
++                    x={right.u + 6}
++                    y={right.v + labelSize / 3}
++                    fontSize={labelSize}
++                  >
++                    {yds}
++                  </text>
++                  <text
++                    className="ball-tracer__distlabel"
++                    x={left.u - 6}
++                    y={left.v + labelSize / 3}
++                    fontSize={labelSize}
++                    textAnchor="end"
++                  >
++                    {yds}
++                  </text>
 +                </g>
 +              );
 +            })}
@@ -1951,7 +2076,7 @@ index 0000000..c67cda1
 +            {/* Latest trace — soft glow under a bright draw-in stroke,
 +                keyed to the shot so it replays */}
 +            {latestTraj && (
-+              <g key={latestShot!.timestamp}>
++              <g key={latestVisible!.timestamp}>
 +                <polyline
 +                  className="ball-tracer__trace-glow"
 +                  points={polylineFrom(latestTraj.points)}
@@ -1972,7 +2097,7 @@ index 0000000..c67cda1
 +                      r={3}
 +                    />
 +                    <circle
-+                      className="ball-tracer__landing"
++                      className={`ball-tracer__landing ${landedInRough ? 'ball-tracer__landing--rough' : ''}`}
 +                      cx={landingPoint.u}
 +                      cy={landingPoint.v}
 +                      r={3}
@@ -1983,7 +2108,7 @@ index 0000000..c67cda1
 +                      y={landingPoint.v - 10}
 +                      textAnchor="middle"
 +                    >
-+                      {Math.round(latestTraj.carry_yards)} yds
++                      {Math.round(latestTraj.carry_yards)} yds{landedInRough ? ' · rough' : ''}
 +                    </text>
 +                  </>
 +                )}
@@ -2003,7 +2128,7 @@ index 0000000..c67cda1
 +            {/* Honest empty/degraded state */}
 +            {!latestTraj && (
 +              <text className="ball-tracer__hint" x={16} y={VIEW_H - 14}>
-+                {latestShot ? 'no flight data for last shot' : 'awaiting first shot'}
++                {latestVisible ? 'no flight data for last shot' : 'awaiting first shot'}
 +              </text>
 +            )}
 +          </svg>
