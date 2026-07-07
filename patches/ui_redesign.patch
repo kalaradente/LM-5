@@ -6757,21 +6757,21 @@ index 3f6f3c3..e601e97 100644
  
 diff --git a/ui/src/data/tourAverages.test.ts b/ui/src/data/tourAverages.test.ts
 new file mode 100644
-index 0000000..5cdd8e2
+index 0000000..11773ef
 --- /dev/null
 +++ b/ui/src/data/tourAverages.test.ts
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,98 @@
 +import { describe, expect, it } from 'vitest';
 +import { rateTourStat, TOUR_AVERAGES } from './tourAverages';
 +
 +describe('rateTourStat — per-stat bands', () => {
-+  it('spin uses ±15% of the tour value', () => {
-+    // Driver spin tour avg 2686: band is 2283.1 .. 3088.9
++  it('spin uses ±20% of the tour value', () => {
++    // Driver spin tour avg 2686: band is 2148.8 .. 3223.2
 +    expect(rateTourStat('driver', 'spin', 2686)?.rating).toBe('avg');
-+    expect(rateTourStat('driver', 'spin', 2290)?.rating).toBe('avg');
-+    expect(rateTourStat('driver', 'spin', 3080)?.rating).toBe('avg');
-+    expect(rateTourStat('driver', 'spin', 2200)?.rating).toBe('low');
-+    expect(rateTourStat('driver', 'spin', 3150)?.rating).toBe('high');
++    expect(rateTourStat('driver', 'spin', 2150)?.rating).toBe('avg');
++    expect(rateTourStat('driver', 'spin', 3220)?.rating).toBe('avg');
++    expect(rateTourStat('driver', 'spin', 2100)?.rating).toBe('low');
++    expect(rateTourStat('driver', 'spin', 3300)?.rating).toBe('high');
 +  });
 +
 +  it('ball speed uses ±10 mph (the "tour 170 → under 160 low, over 180 high" rule)', () => {
@@ -6782,18 +6782,20 @@ index 0000000..5cdd8e2
 +    expect(rateTourStat('driver', 'ball_speed', 178)?.rating).toBe('high');
 +  });
 +
-+  it('club speed uses ±10 mph', () => {
-+    // Driver club speed tour avg 113
-+    expect(rateTourStat('driver', 'club_speed', 102)?.rating).toBe('low');
-+    expect(rateTourStat('driver', 'club_speed', 110)?.rating).toBe('avg');
-+    expect(rateTourStat('driver', 'club_speed', 124)?.rating).toBe('high');
++  it('club speed uses ±6 mph', () => {
++    // Driver club speed tour avg 113: band is 107 .. 119
++    expect(rateTourStat('driver', 'club_speed', 106)?.rating).toBe('low');
++    expect(rateTourStat('driver', 'club_speed', 108)?.rating).toBe('avg');
++    expect(rateTourStat('driver', 'club_speed', 118)?.rating).toBe('avg');
++    expect(rateTourStat('driver', 'club_speed', 120)?.rating).toBe('high');
 +  });
 +
-+  it('smash factor uses ±0.05', () => {
-+    // Driver smash tour avg 1.48
-+    expect(rateTourStat('driver', 'smash', 1.42)?.rating).toBe('low');
++  it('smash factor uses ±0.08', () => {
++    // Driver smash tour avg 1.48: band is 1.40 .. 1.56
++    expect(rateTourStat('driver', 'smash', 1.39)?.rating).toBe('low');
 +    expect(rateTourStat('driver', 'smash', 1.45)?.rating).toBe('avg');
-+    expect(rateTourStat('driver', 'smash', 1.54)?.rating).toBe('high');
++    expect(rateTourStat('driver', 'smash', 1.55)?.rating).toBe('avg');
++    expect(rateTourStat('driver', 'smash', 1.57)?.rating).toBe('high');
 +  });
 +
 +  it('carry uses ±10%', () => {
@@ -6859,7 +6861,7 @@ index 0000000..5cdd8e2
 +});
 diff --git a/ui/src/data/tourAverages.ts b/ui/src/data/tourAverages.ts
 new file mode 100644
-index 0000000..59879b2
+index 0000000..24afba5
 --- /dev/null
 +++ b/ui/src/data/tourAverages.ts
 @@ -0,0 +1,116 @@
@@ -6948,11 +6950,11 @@ index 0000000..59879b2
 +// 170 → under 160 reads LOW, over 180 reads HIGH.
 +const STAT_SPECS: Record<TourStat, StatSpec> = {
 +  ball_speed: { ref: (r) => r.ball_speed_mph, band: { abs: 10 } },
-+  club_speed: { ref: (r) => r.club_speed_mph, band: { abs: 10 } },
-+  smash: { ref: (r) => r.smash_factor, band: { abs: 0.05 } },
++  club_speed: { ref: (r) => r.club_speed_mph, band: { abs: 6 } },
++  smash: { ref: (r) => r.smash_factor, band: { abs: 0.08 } },
 +  carry: { ref: (r) => r.carry_yards, band: { pct: 0.1 } },
 +  launch: { ref: (r) => r.launch_deg, band: { abs: 3 } },
-+  spin: { ref: (r) => r.spin_rpm, band: { pct: 0.15 } },
++  spin: { ref: (r) => r.spin_rpm, band: { pct: 0.2 } },
 +  aoa: { ref: (r) => r.attack_angle_deg, band: { abs: 2 } },
 +  peak_ft: { ref: (r) => r.max_height_yards * 3, band: { abs: 15 } },
 +};
