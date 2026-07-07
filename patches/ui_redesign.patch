@@ -8033,3 +8033,45 @@ index 2af0476..e5189cd 100644
 +export function formatPeakHeight(apexYards: number, digits = 0): string {
 +  return (apexYards * YARDS_TO_FEET).toFixed(digits);
 +}
+diff --git a/ui/tests/e2e/app.spec.ts b/ui/tests/e2e/app.spec.ts
+index 981b292..a639ba2 100644
+--- a/ui/tests/e2e/app.spec.ts
++++ b/ui/tests/e2e/app.spec.ts
+@@ -48,8 +48,12 @@ test('renders live shot data and mock-mode simulate flow', async ({ page }) => {
+   await page.getByRole('button', { name: 'Simulate Shot' }).click();
+ 
+   await expect(page.getByText('Ready for your shot')).toBeHidden();
+-  await expect(page.locator('.speed-gauge__value')).not.toHaveText('--');
+-  await expect(page.locator('.metric-card').filter({ hasText: 'Carry' }).locator('.metric-card__value')).not.toHaveText('--');
++  // The special ball-speed gauge became a uniform metric card (session_mode
++  // patch); ball speed is now the first primary card in the grid.
++  await expect(
++    page.locator('.metric-card').filter({ hasText: 'Ball Speed' }).locator('.metric-card__value'),
++  ).not.toHaveText('—');
++  await expect(page.locator('.metric-card').filter({ hasText: 'Carry' }).locator('.metric-card__value')).not.toHaveText('—');
+ });
+ 
+ test('switches between primary navigation views', async ({ page }) => {
+@@ -107,14 +111,17 @@ test('unit toggle updates displayed units', async ({ page }) => {
+   await gotoApp(page);
+   await page.getByRole('button', { name: 'Close club selection' }).click();
+ 
+-  await expect(page.locator('.speed-gauge__unit')).toHaveText('mph');
++  // Units are a single cycling key now (ui_redesign): the button shows the
++  // CURRENT system and pressing it switches to the other.
++  const ballCard = page.locator('.metric-card').filter({ hasText: 'Ball Speed' });
++  await expect(ballCard.locator('.metric-card__unit')).toHaveText('mph');
+   await expect(page.locator('.metric-card').filter({ hasText: 'Carry' }).locator('.metric-card__unit')).toHaveText('yds');
+ 
+-  const imperialSpeed = await page.locator('.speed-gauge__value').textContent();
++  const imperialSpeed = await ballCard.locator('.metric-card__value').textContent();
+ 
+-  await page.getByRole('button', { name: 'KMH/M' }).click();
++  await page.getByRole('button', { name: 'MPH/YDS' }).click();
+ 
+-  await expect(page.locator('.speed-gauge__unit')).toHaveText('km/h');
++  await expect(ballCard.locator('.metric-card__unit')).toHaveText('km/h');
+   await expect(page.locator('.metric-card').filter({ hasText: 'Carry' }).locator('.metric-card__unit')).toHaveText('m');
+-  await expect(page.locator('.speed-gauge__value')).not.toHaveText(imperialSpeed ?? '');
++  await expect(ballCard.locator('.metric-card__value')).not.toHaveText(imperialSpeed ?? '');
+ });
