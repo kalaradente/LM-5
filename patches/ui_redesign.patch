@@ -1509,10 +1509,10 @@ index 0000000..1f6d6c5
 +}
 diff --git a/ui/src/components/BallTracer.test.tsx b/ui/src/components/BallTracer.test.tsx
 new file mode 100644
-index 0000000..65a214a
+index 0000000..15a0fb3
 --- /dev/null
 +++ b/ui/src/components/BallTracer.test.tsx
-@@ -0,0 +1,104 @@
+@@ -0,0 +1,105 @@
 +import { renderToString } from 'react-dom/server';
 +import { describe, expect, it } from 'vitest';
 +import type { CameraStatus } from '../stores/useCameraStore';
@@ -1599,7 +1599,8 @@ index 0000000..65a214a
 +      <BallTracer shots={[tracedShot]} latestShot={tracedShot} cameraStatus={cameraOff} />,
 +    );
 +    expect(html).toContain('ball-tracer__trace');
-+    expect(html).toContain('▴ 32y');
++    // Peak height is always feet: 31.5 yd apex = 94.5 ft → 95 ft
++    expect(html).toContain('▴ 95 ft');
 +    expect(html).toContain('251 yds');
 +  });
 +
@@ -1619,14 +1620,15 @@ index 0000000..65a214a
 +});
 diff --git a/ui/src/components/BallTracer.tsx b/ui/src/components/BallTracer.tsx
 new file mode 100644
-index 0000000..afe49ff
+index 0000000..d9e0527
 --- /dev/null
 +++ b/ui/src/components/BallTracer.tsx
-@@ -0,0 +1,247 @@
+@@ -0,0 +1,248 @@
 +import type { Shot } from '../types/shot';
 +import type { CameraStatus } from '../stores/useCameraStore';
 +import { useTracerPreference } from '../state/useTracerPreference';
 +import type { TracerHistory } from '../stores/useTracerPreferenceStore';
++import { PEAK_HEIGHT_UNIT, formatPeakHeight } from '../utils/units';
 +import './BallTracer.css';
 +
 +/**
@@ -1834,7 +1836,7 @@ index 0000000..afe49ff
 +                    y={apexPoint.v - 8}
 +                    textAnchor="middle"
 +                  >
-+                    ▴ {Math.round(latestTraj.apex_yards)}y
++                    ▴ {formatPeakHeight(latestTraj.apex_yards)} {PEAK_HEIGHT_UNIT}
 +                  </text>
 +                )}
 +                {landingPoint && (
@@ -3982,16 +3984,17 @@ index 048359e..9bdfefc 100644
    }
  }
 diff --git a/ui/src/components/DisplayMode.tsx b/ui/src/components/DisplayMode.tsx
-index 1516a9b..9b36958 100644
+index 1516a9b..ef44ba9 100644
 --- a/ui/src/components/DisplayMode.tsx
 +++ b/ui/src/components/DisplayMode.tsx
 @@ -2,8 +2,11 @@ import { useState } from 'react';
  import type { CameraStatus } from '../stores/useCameraStore';
  import type { Shot } from '../types/shot';
  import { useUnitPreference } from '../state/useUnitPreference';
+-import { formatDistance, formatSpeed, getDistanceUnit, getSpeedUnit } from '../utils/units';
 +import { useHandednessPreference } from '../state/useHandednessPreference';
 +import type { Handedness } from '../stores/useHandednessPreferenceStore';
- import { formatDistance, formatSpeed, getDistanceUnit, getSpeedUnit } from '../utils/units';
++import { PEAK_HEIGHT_UNIT, formatDistance, formatPeakHeight, formatSpeed, getDistanceUnit, getSpeedUnit } from '../utils/units';
  import { getServerOrigin } from '../utils/serverOrigin';
 +import { rateTourStat, type TourComparison } from '../data/tourAverages';
  import './DisplayMode.css';
@@ -4017,12 +4020,27 @@ index 1516a9b..9b36958 100644
    if (!shot) {
      return [
        { label: 'Ball Speed', value: '--', unit: getSpeedUnit(unitSystem) },
-@@ -81,17 +95,22 @@ function buildMetrics(shot: Shot | null, unitSystem: 'imperial' | 'metric'): Dis
+@@ -48,6 +62,7 @@ function buildMetrics(shot: Shot | null, unitSystem: 'imperial' | 'metric'): Dis
+       { label: 'Club Speed', value: '--', unit: getSpeedUnit(unitSystem) },
+       { label: 'Smash', value: '--' },
+       { label: 'Launch', value: '--', unit: 'deg' },
++      { label: 'Peak', value: '--', unit: PEAK_HEIGHT_UNIT },
+       { label: 'Spin', value: '--', unit: 'rpm' },
+       { label: 'Club Path', value: '--', unit: 'deg' },
+       { label: 'H. Launch', value: '--', unit: 'deg' },
+@@ -81,17 +96,29 @@ function buildMetrics(shot: Shot | null, unitSystem: 'imperial' | 'metric'): Dis
        label: 'Launch',
        value: formatOptionalNumber(shot.launch_angle_vertical),
        unit: shot.launch_angle_vertical === null ? undefined : 'deg',
 -      detail: shot.angle_source ?? undefined,
 +      detail: tourDetail(rateTourStat(shot.club, 'launch', shot.launch_angle_vertical), '°') ?? shot.angle_source ?? undefined,
++    },
++    {
++      // Peak height is always feet, both unit systems.
++      label: 'Peak',
++      value: shot.trajectory ? formatPeakHeight(shot.trajectory.apex_yards) : '--',
++      unit: shot.trajectory ? PEAK_HEIGHT_UNIT : undefined,
++      detail: shot.trajectory ? 'simulated' : undefined,
      },
      {
        label: 'Spin',
@@ -4043,7 +4061,7 @@ index 1516a9b..9b36958 100644
        unit: shot.club_path_deg === null ? undefined : 'deg',
      },
      {
-@@ -118,7 +137,8 @@ function DisplayMetricCard({ metric, featured = false }: { metric: DisplayMetric
+@@ -118,7 +145,8 @@ function DisplayMetricCard({ metric, featured = false }: { metric: DisplayMetric
  export function DisplayMode({ connected, cameraStatus, latestShot, shots }: DisplayModeProps) {
    const [failedCameraKey, setFailedCameraKey] = useState<string | null>(null);
    const { unitSystem } = useUnitPreference();
@@ -4931,20 +4949,29 @@ index df7c5ce..affc018 100644
 -  font-size: clamp(0.75rem, 6cqw, 1.5rem);
  }
 diff --git a/ui/src/components/ShotDisplay.tsx b/ui/src/components/ShotDisplay.tsx
-index cd645e3..fad9917 100644
+index cd645e3..a9babf1 100644
 --- a/ui/src/components/ShotDisplay.tsx
 +++ b/ui/src/components/ShotDisplay.tsx
-@@ -1,7 +1,9 @@
+@@ -1,7 +1,17 @@
  import { useMemo } from 'react';
  import type { Shot } from '../types/shot';
  import { useUnitPreference } from '../state/useUnitPreference';
+-import { formatCarryRange, formatDistance, formatSpeed, getDistanceUnit, getSpeedUnit } from '../utils/units';
 +import { useHandednessPreference } from '../state/useHandednessPreference';
- import { formatCarryRange, formatDistance, formatSpeed, getDistanceUnit, getSpeedUnit } from '../utils/units';
++import {
++  PEAK_HEIGHT_UNIT,
++  formatCarryRange,
++  formatDistance,
++  formatPeakHeight,
++  formatSpeed,
++  getDistanceUnit,
++  getSpeedUnit,
++} from '../utils/units';
 +import { rateTourStat, type TourComparison } from '../data/tourAverages';
  import { ReorderableGrid, type GridItem } from './ReorderableGrid';
  import './ShotDisplay.css';
  
-@@ -10,20 +12,41 @@ interface ShotDisplayProps {
+@@ -10,20 +20,41 @@ interface ShotDisplayProps {
    animate?: boolean;
  }
  
@@ -4988,7 +5015,7 @@ index cd645e3..fad9917 100644
  }) {
    return (
      <div className={`metric-card metric-card--${variant}`}>
-@@ -33,16 +56,7 @@ export function MetricCard({
+@@ -33,16 +64,7 @@ export function MetricCard({
        </div>
        <span className="metric-card__label">{label}</span>
        {subtext && <span className="metric-card__subtext">{subtext}</span>}
@@ -5006,7 +5033,7 @@ index cd645e3..fad9917 100644
      </div>
    );
  }
-@@ -51,15 +65,9 @@ function formatSpinRpm(rpm: number): string {
+@@ -51,15 +73,9 @@ function formatSpinRpm(rpm: number): string {
    return rpm.toLocaleString('en-US', { maximumFractionDigits: 0 });
  }
  
@@ -5023,7 +5050,7 @@ index cd645e3..fad9917 100644
    const carryRange = useMemo(() => {
      if (!shot) return null;
      return formatCarryRange(shot.carry_range, unitSystem);
-@@ -71,14 +79,10 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+@@ -71,14 +87,10 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
    if (!shot) {
      return (
        <div className="shot-display shot-display--empty">
@@ -5042,7 +5069,7 @@ index cd645e3..fad9917 100644
            </div>
            <p className="shot-display__waiting-text">Ready for your shot</p>
            <p className="shot-display__waiting-hint">Position ball in front of radar</p>
-@@ -89,6 +93,10 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+@@ -89,6 +101,10 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
  
    const hasSpin = shot.spin_rpm !== null;
    const hasLaunchAngle = shot.launch_angle_vertical !== null;
@@ -5053,7 +5080,7 @@ index cd645e3..fad9917 100644
  
    // Every metric — ball speed included — is now a uniform box in one
    // reflowing, drag-reorderable grid (no more special gauge column).
-@@ -137,7 +145,8 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+@@ -137,12 +153,29 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
            label="V. Launch"
            subtext={hasLaunchAngle ? (shot.angle_source ?? undefined) : undefined}
            variant="secondary"
@@ -5063,7 +5090,28 @@ index cd645e3..fad9917 100644
          />
        ),
      },
-@@ -152,11 +161,14 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+   ];
+ 
++  if (shot.trajectory) {
++    // Peak height is ALWAYS feet, both unit systems. Provenance: the apex
++    // comes from the same RK4 flight the tracer draws.
++    items.push({
++      id: 'peak_height',
++      content: (
++        <MetricCard
++          value={formatPeakHeight(shot.trajectory.apex_yards)}
++          unit={PEAK_HEIGHT_UNIT}
++          label="Peak Height"
++          subtext="simulated"
++          variant="secondary"
++        />
++      ),
++    });
++  }
+   if (shot.club_angle_deg !== null) {
+     items.push({
+       id: 'club_aoa',
+@@ -152,11 +185,14 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
      });
    }
    if (shot.club_path_deg !== null) {
@@ -5079,7 +5127,7 @@ index cd645e3..fad9917 100644
            unit="°"
            label="Club Path"
            subtext="radar"
-@@ -166,14 +178,19 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+@@ -166,14 +202,19 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
      });
    }
    if (shot.spin_axis_deg !== null) {
@@ -5101,7 +5149,7 @@ index cd645e3..fad9917 100644
            variant="secondary"
          />
        ),
-@@ -189,7 +206,6 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+@@ -189,7 +230,6 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
            label="H. Launch"
            subtext={shot.angle_source ?? undefined}
            variant="secondary"
@@ -5109,7 +5157,7 @@ index cd645e3..fad9917 100644
          />
        ),
      });
-@@ -203,7 +219,7 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+@@ -203,7 +243,7 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
          label="Spin Rate"
          subtext={hasSpin && shot.spin_source ? (shot.spin_source === 'calculated' ? 'estimated' : 'radar') : undefined}
          variant="spin"
@@ -5377,19 +5425,22 @@ index 42e8f1d..9d277b2 100644
    }
  }
 diff --git a/ui/src/components/ShotList.tsx b/ui/src/components/ShotList.tsx
-index e2dd911..ed8a3f4 100644
+index e2dd911..ddeaf3b 100644
 --- a/ui/src/components/ShotList.tsx
 +++ b/ui/src/components/ShotList.tsx
-@@ -1,6 +1,8 @@
+@@ -1,8 +1,10 @@
  import { useMemo, useState, memo } from 'react';
  import type { Shot } from '../types/shot';
  import { useUnitPreference } from '../state/useUnitPreference';
 +import { useHandednessPreference } from '../state/useHandednessPreference';
 +import type { Handedness } from '../stores/useHandednessPreferenceStore';
  import type { UnitSystem } from '../utils/units';
- import { formatDistance, formatSpeed, getDistanceUnit } from '../utils/units';
+-import { formatDistance, formatSpeed, getDistanceUnit } from '../utils/units';
++import { formatDistance, formatPeakHeight, formatSpeed, getDistanceUnit } from '../utils/units';
  import './ShotList.css';
-@@ -16,35 +18,56 @@ interface ShotRowProps {
+ 
+ const SHOTS_PER_PAGE = 5;
+@@ -16,35 +18,61 @@ interface ShotRowProps {
    shotNumber: number;
    unitSystem: UnitSystem;
    distanceUnit: string;
@@ -5419,6 +5470,11 @@ index e2dd911..ed8a3f4 100644
 +    { label: 'smash', value: isSwing ? '—' : fmt(shot.smash_factor, 2) },
 +    { label: 'launch', value: isSwing ? '—' : fmt(shot.launch_angle_vertical, 1, { suffix: '°' }) },
 +    { label: 'h.launch', value: isSwing ? '—' : fmt(shot.launch_angle_horizontal, 1, { sign: true, suffix: '°' }) },
++    // Peak height is always feet, both unit systems.
++    {
++      label: 'peak ft',
++      value: !isSwing && shot.trajectory ? formatPeakHeight(shot.trajectory.apex_yards) : '—',
++    },
 +    {
 +      label: 'spin',
 +      value:
@@ -5465,7 +5521,7 @@ index e2dd911..ed8a3f4 100644
          <span className="shot-row__label">{distanceUnit}</span>
        </span>
      </div>
-@@ -54,6 +77,7 @@ const ShotRow = memo(function ShotRow({ shot, shotNumber, unitSystem, distanceUn
+@@ -54,6 +82,7 @@ const ShotRow = memo(function ShotRow({ shot, shotNumber, unitSystem, distanceUn
  export function ShotList({ shots }: ShotListProps) {
    const [page, setPage] = useState(0);
    const { unitSystem } = useUnitPreference();
@@ -5473,7 +5529,7 @@ index e2dd911..ed8a3f4 100644
    const distanceUnit = getDistanceUnit(unitSystem);
  
    const totalPages = Math.ceil(shots.length / SHOTS_PER_PAGE);
-@@ -84,6 +108,7 @@ export function ShotList({ shots }: ShotListProps) {
+@@ -84,6 +113,7 @@ export function ShotList({ shots }: ShotListProps) {
              shotNumber={shots.length - startIndex - index}
              unitSystem={unitSystem}
              distanceUnit={distanceUnit}
@@ -5989,10 +6045,10 @@ index ddfe397..57b7c0f 100644
  }
 diff --git a/ui/src/components/StatsView.test.tsx b/ui/src/components/StatsView.test.tsx
 new file mode 100644
-index 0000000..7f79e94
+index 0000000..e9ee000
 --- /dev/null
 +++ b/ui/src/components/StatsView.test.tsx
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,102 @@
 +import { renderToString } from 'react-dom/server';
 +import { describe, expect, it } from 'vitest';
 +import type { Shot } from '../types/shot';
@@ -6024,7 +6080,17 @@ index 0000000..7f79e94
 +  };
 +}
 +
-+const playShot = makeShot({});
++const playShot = makeShot({
++  trajectory: {
++    points: [
++      [0, 0, 0],
++      [251, 6, 0],
++    ],
++    apex_yards: 30, // = 90 ft
++    carry_yards: 251,
++    lateral_yards: 6,
++  },
++});
 +const swing = makeShot({ mode: 'speed-training', ball_speed_mph: 0, club_speed_mph: 88.5 });
 +
 +// renderToString interleaves comment markers between text segments
@@ -6053,6 +6119,21 @@ index 0000000..7f79e94
 +    expect(html).toContain('Avg Ball');
 +  });
 +
++  it('tracks peak height in feet in the ball stats', () => {
++    const html = renderPlain(<StatsView shots={[playShot]} onClearSession={() => {}} />);
++
++    expect(html).toContain('Avg Peak (ft)');
++    expect(html).toContain('Max Peak (ft)');
++    expect(html).toContain('90');
++  });
++
++  it('omits peak stats when no shot carried a flight path', () => {
++    const bare = makeShot({ trajectory: null });
++    const html = renderPlain(<StatsView shots={[bare]} onClearSession={() => {}} />);
++
++    expect(html).not.toContain('Avg Peak');
++  });
++
 +  it('keeps swings out of the ball aggregates', () => {
 +    const html = renderPlain(<StatsView shots={[playShot, swing]} onClearSession={() => {}} />);
 +
@@ -6071,7 +6152,7 @@ index 0000000..7f79e94
 +  });
 +});
 diff --git a/ui/src/components/StatsView.tsx b/ui/src/components/StatsView.tsx
-index e1d3ce6..d4a28a2 100644
+index e1d3ce6..00cb538 100644
 --- a/ui/src/components/StatsView.tsx
 +++ b/ui/src/components/StatsView.tsx
 @@ -10,6 +10,10 @@ interface StatsViewProps {
@@ -6156,7 +6237,7 @@ index e1d3ce6..d4a28a2 100644
          <div className="stats-grid">
            <div className="stat-card">
              <span className="stat-card__value">{swingSpeeds.length}</span>
-@@ -75,60 +125,38 @@ export function StatsView({ shots, onClearSession }: StatsViewProps) {
+@@ -75,60 +125,50 @@ export function StatsView({ shots, onClearSession }: StatsViewProps) {
            </div>
          </div>
        )}
@@ -6228,6 +6309,18 @@ index e1d3ce6..d4a28a2 100644
 +            <span className="stat-card__value">{formatDistance(stats.avg_carry_est, unitSystem, 0)}</span>
 +            <span className="stat-card__label">Avg Carry ({distanceUnit})</span>
 +          </div>
++          {stats.avg_peak_ft !== null && (
++            <div className="stat-card">
++              <span className="stat-card__value">{stats.avg_peak_ft.toFixed(0)}</span>
++              <span className="stat-card__label">Avg Peak (ft)</span>
++            </div>
++          )}
++          {stats.max_peak_ft !== null && (
++            <div className="stat-card">
++              <span className="stat-card__value">{stats.max_peak_ft.toFixed(0)}</span>
++              <span className="stat-card__label">Max Peak (ft)</span>
++            </div>
++          )}
 +          {stats.avg_club_speed && (
 +            <div className="stat-card">
 +              <span className="stat-card__value">{formatSpeed(stats.avg_club_speed, unitSystem, 1)}</span>
@@ -6871,7 +6964,7 @@ index 0000000..4f3ba21
 +  },
 +}));
 diff --git a/ui/src/types/shot.ts b/ui/src/types/shot.ts
-index 7d347ff..6cd351f 100644
+index 7d347ff..25ebb5b 100644
 --- a/ui/src/types/shot.ts
 +++ b/ui/src/types/shot.ts
 @@ -25,6 +25,16 @@ export interface Shot {
@@ -6891,38 +6984,94 @@ index 7d347ff..6cd351f 100644
  }
  
  export interface SessionStats {
+@@ -36,6 +46,10 @@ export interface SessionStats {
+   avg_club_speed: number | null;
+   avg_smash_factor: number | null;
+   avg_carry_est: number;
++  // Peak (apex) height in FEET — always feet, both unit systems. Null when
++  // no shot in the set carried a simulated flight path.
++  avg_peak_ft: number | null;
++  max_peak_ft: number | null;
+   // Rolling buffer mode spin stats
+   avg_spin_rpm?: number | null;
+   spin_detection_rate?: number;
+@@ -93,6 +107,8 @@ export function computeStats(shots: Shot[]): SessionStats {
+       avg_club_speed: null,
+       avg_smash_factor: null,
+       avg_carry_est: 0,
++      avg_peak_ft: null,
++      max_peak_ft: null,
+     };
+   }
+ 
+@@ -100,6 +116,12 @@ export function computeStats(shots: Shot[]): SessionStats {
+   const clubSpeeds = shots.map((s) => s.club_speed_mph).filter((v): v is number => v !== null);
+   const smashFactors = shots.map((s) => s.smash_factor).filter((v): v is number => v !== null);
+   const carries = shots.map((s) => s.estimated_carry_yards);
++  // Peak height in FEET (always feet, both unit systems), from the shots
++  // that carried a simulated flight path.
++  const peaksFt = shots
++    .map((s) => s.trajectory?.apex_yards)
++    .filter((v): v is number => v !== null && v !== undefined)
++    .map((v) => v * 3);
+ 
+   const mean = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
+   const stdDev = (arr: number[]) => {
+@@ -117,6 +139,8 @@ export function computeStats(shots: Shot[]): SessionStats {
+     avg_club_speed: clubSpeeds.length > 0 ? mean(clubSpeeds) : null,
+     avg_smash_factor: smashFactors.length > 0 ? mean(smashFactors) : null,
+     avg_carry_est: mean(carries),
++    avg_peak_ft: peaksFt.length > 0 ? mean(peaksFt) : null,
++    max_peak_ft: peaksFt.length > 0 ? Math.max(...peaksFt) : null,
+   };
+ }
+ 
 diff --git a/ui/src/utils/tracerProjection.ts b/ui/src/utils/tracerProjection.ts
 new file mode 100644
-index 0000000..8e32200
+index 0000000..1de8012
 --- /dev/null
 +++ b/ui/src/utils/tracerProjection.ts
-@@ -0,0 +1,37 @@
-+/* Pinhole projection for the ball tracer's behind-the-golfer view.
+@@ -0,0 +1,51 @@
++/* Stylized behind-the-golfer projection for the ball tracer.
 +   World frame: x downrange, y lateral (+right), z up — all yards.
-+   Camera sits CAM_BACK yards behind the tee at eye height, looking level
-+   downrange. Constants tuned so a tour-typical apex (27-32 yds high per
-+   the TrackMan dataset) stays inside the frame for normal carries. */
++
++   Deliberately NOT a pinhole render: true perspective collapses the whole
++   100-400 yd band into ~15 px of horizon (ground positions scale as 1/d),
++   which made every carry look identical and every flight look flat. Like
++   broadcast tracer graphics, depth runs on a square-root curve so far
++   carries stay visibly separated, and height is drawn at a boosted scale
++   tied to the local depth so arcs read as arcs. It's a chart, not a
++   photograph — tuned so bigger carry always lands visibly deeper and
++   higher apex always draws visibly taller. */
 +
 +export const VIEW_W = 720;
 +export const VIEW_H = 400;
-+export const CAM_BACK = 7; // yards behind the tee
-+// Broadcast-tower vantage: at eye height the entire 150-400 yd band
-+// collapses into ~15 px of horizon; ~8 yds up (what range sims use) keeps
-+// depth readable while apexes still fit under the frame's top edge.
-+export const CAM_HEIGHT = 8;
-+export const FOCAL = 360;
-+export const HORIZON = 150;
 +export const RANGE_DEPTH = 420; // yards — beyond any real carry
 +export const HALF_WIDTH = 25; // yards — 50 yd wide fairway
-+// Fairway's near edge extends toward the camera so the foreground is
-+// ground, not void (projects just past the bottom of the frame).
++// Fairway's near edge extends toward the viewer so the foreground is
++// ground, not void (maps just past the bottom of the frame).
 +export const FAIRWAY_NEAR_X = -3.5;
 +
++const V_NEAR = 395; // screen v of the ground at the tee (x = 0)
++const V_HORIZON = 110; // screen v the fairway converges toward
++const W_NEAR = 330; // half-width in px of the fairway at the tee
++const W_FAR = 26; // half-width in px at RANGE_DEPTH
++const HEIGHT_FACTOR = 0.6; // arc emphasis relative to local lateral scale
++
++/** Signed sqrt depth parameter: 0 at the tee, 1 at RANGE_DEPTH. */
++function depthT(x: number): number {
++  const a = Math.abs(x) / RANGE_DEPTH;
++  return Math.sign(x) * Math.sqrt(a);
++}
++
 +export function project(x: number, y: number, z: number): { u: number; v: number } {
-+  const d = Math.max(x + CAM_BACK, 0.5);
++  const t = depthT(x);
++  const halfWidthPx = W_NEAR - t * (W_NEAR - W_FAR);
++  const pxPerYd = halfWidthPx / HALF_WIDTH;
++  const groundV = V_NEAR - t * (V_NEAR - V_HORIZON);
 +  return {
-+    u: VIEW_W / 2 + (FOCAL * y) / d,
-+    v: HORIZON + (FOCAL * (CAM_HEIGHT - z)) / d,
++    u: VIEW_W / 2 + y * pxPerYd,
++    v: groundV - z * pxPerYd * HEIGHT_FACTOR,
 +  };
 +}
 +
@@ -6933,4 +7082,21 @@ index 0000000..8e32200
 +      return `${p.u.toFixed(1)},${p.v.toFixed(1)}`;
 +    })
 +    .join(' ');
++}
+diff --git a/ui/src/utils/units.ts b/ui/src/utils/units.ts
+index 2af0476..e5189cd 100644
+--- a/ui/src/utils/units.ts
++++ b/ui/src/utils/units.ts
+@@ -44,3 +44,12 @@ export function formatCarryRange(carryRange: [number, number], unitSystem: UnitS
+   const max = formatDistance(carryRange[1], unitSystem, 0);
+   return `${min}-${max} ${getDistanceUnit(unitSystem)}`;
+ }
++
++const YARDS_TO_FEET = 3;
++export const PEAK_HEIGHT_UNIT = 'ft';
++
++/** Peak (apex) height is ALWAYS feet, in both unit systems — golfers talk
++ * about ball flight in feet regardless of how they measure carry. */
++export function formatPeakHeight(apexYards: number, digits = 0): string {
++  return (apexYards * YARDS_TO_FEET).toFixed(digits);
 +}
