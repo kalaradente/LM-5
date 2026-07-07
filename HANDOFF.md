@@ -1,11 +1,13 @@
 # LM-2 — Session Handoff / State of Affairs
 
-_Written 2026-07-04, last updated 2026-07-06 (after audits #1-#7). Read
-this first, then `openflight_iwr6843/docs/audit-log.md` (the running audit
-record — REQUIRED reading before assuming anything about open issues),
-`TODO.md`, and `openflight_iwr6843/README.md`. Auto-memory also carries
-project context across sessions (repo layout, pypdf-for-PDFs, the audit
-framework, "physics first when tuning stalls")._
+_Written 2026-07-04, last updated 2026-07-08 (after audit #8, the web-UI
+redesign + flight-physics session). Read this first, then
+`openflight_iwr6843/docs/audit-log.md` (the running audit record —
+REQUIRED reading before assuming anything about open issues), `TODO.md`,
+`openflight_iwr6843/docs/hardware-physics-limits.md` (the honest
+non-tuning limits list), and `openflight_iwr6843/README.md`. Auto-memory
+also carries project context across sessions (repo layout, pypdf-for-PDFs,
+the audit framework, "physics first when tuning stalls")._
 
 ---
 
@@ -42,10 +44,15 @@ until the parts arrive.
   Its committed state is the real LM-1.)
 
 `openflight_upstream/` (the OpenFlight clone) is **git-ignored** in both —
-it has its own git history. The setup wizard clones it and applies our one
-patch. On a dev machine, symlink it for testing:
+it has its own git history. The setup wizard clones it, applies our
+patches (`patches/`, glob order: `session_mode` → `simulate_custom_shot` →
+`ui_redesign`), then `npm install && npm run build`s the UI (the server
+serves `ui/dist`; without the build the Pi serves a stale bundle). On a
+dev machine, symlink it for testing:
 `ln -sfn ~/Desktop/OPENFLIGHT/openflight_upstream openflight_upstream`
-(remove the symlink before committing).
+(remove the symlink before committing). **Symlink trap:** other sessions
+create/remove that symlink — `readlink` before writing through it, or
+writes land in the frozen LM-1 snapshot.
 
 ---
 
@@ -302,6 +309,51 @@ Highlights a fresh session should know:
   folder); the z-axis sign check (hand above boresight, rung 2) remains.
 - Exact xWR6843ISK board outline (measure the real board before machining
   the plate); board rev C-or-later check.
+
+---
+
+## 7b. The web-UI / physics / tracer surface (2026-07-07/08 session)
+
+A parallel session rebuilt the entire user-facing layer as
+`patches/ui_redesign.patch` (~8k lines, applies after `session_mode`).
+Full detail: audit #8 (U-series) in the audit log + the commit messages.
+The load-bearing facts:
+
+- **"Calibrated Instrument" UI**: signal-amber design system, IBM Plex
+  self-hosted (offline Pi), dark/light themes, LH/RH handedness (flips
+  spin-axis + club-path display signs), full-metrics shot ledger, Speed
+  Training stats tab, new clubs (MD/9W/2H/4H wired through ClubType +
+  every per-club table).
+- **Ball tracer**: virtual range in Live, behind-the-golfer view.
+  Deliberately a STYLIZED sqrt-depth projection (documented as a chart,
+  not a pinhole render — true perspective collapses 100-400 yd into
+  ~15 px). Trace = the server's own RK4 flight path shipped in the shot
+  payload (`trajectory` field), draw paced to real `flight_time_s`,
+  centripetal Catmull-Rom smoothing. Fold/clear/history controls;
+  auto-clears on club change; off-fairway landings say "rough".
+- **Tour grading**: every stat that overlaps the TrackMan CSV
+  (`~/Desktop/datasheets/pgatourstats/`) rates LOW/AVG/HIGH per club with
+  PER-STAT bands (ball ±10 mph, club ±6, smash ±0.08, carry ±10%,
+  launch ±3°, spin ±20%, AoA ±2°, peak ±15 ft). Peak height is ALWAYS
+  feet, everywhere. No tour row → no rating (never invent a reference).
+- **Physics**: the RK4 aero constants were mis-tuned — apex flew ~21% low
+  for the life of the code because apex was never displayed or asserted
+  (carry looked fine: two errors cancel in distance, not height). Tuned
+  against all 12 tour rows at ISA sea level / RAW carry: carry 2.2%,
+  apex 3.2% mean error. **Golden scorecard:
+  `tests/test_ballistics_tour.py`; retune via `scripts/tune_ballistics.py`
+  against the dataset — never hand-nudge constants.**
+- **Audit #8 rules now standing**: every displayed quantity gets a
+  ground-truth test; zero console noise (currently literally zero —
+  errors AND warnings). Socket handlers hardened vs non-dict/garbage
+  payloads (U-1..U-3, pinned by `tests/test_server_dirt.py`).
+- **Verification stack**: 890 Python unit + 45 UI unit + 6 Playwright e2e
+  (updated to the new UI) + golden physics tests. Patch re-verified
+  applying on a virgin upstream clone in wizard order after every change.
+- **Short game**: floor is ~14 mph ball (≈3.5 yd carry) at 83%, 17 mph at
+  100%; `shortgame_probe.py --live` is the hardware bench script; the
+  chip-regime classifier pass (phantoms at chip-speed practice swings) is
+  the blocker before any short-game mode. See hardware-physics-limits.md.
 
 ---
 
