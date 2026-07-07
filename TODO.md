@@ -457,3 +457,12 @@ Running list of open items. Newest relevant item first per section.
 - [ ] RFbeam K-MC3 (larger antenna) if range/SNR proves insufficient.
 - [ ] Titleist RCT balls (only if plain/foil-marked balls underperform in
       the rung-3 drill-rig test).
+- [ ] **Short-game floor bench (rung 5)** — run `shortgame_probe.py --live
+      --gate 4.5` when hardware lands: phase 1 idle false-trigger count,
+      phase 2 real chips vs detections. Synthetic answer (2026-07-07):
+      classifier floor ~14 mph ball (≈3.5 yd carry) at 83%, 17 mph at
+      100%; BLOCKER is chip-speed practice swings phantoming ~58% — needs
+      a chip-regime classifier pass before any short-game session mode
+      ships. Hard walls regardless: no measured spin <17 mph, chip angles
+      informational, no rollout model. Full list:
+      openflight_iwr6843/docs/hardware-physics-limits.md.
