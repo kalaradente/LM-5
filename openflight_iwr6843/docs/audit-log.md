@@ -5,12 +5,87 @@ Each audit walks **five stages per radar channel** (the "air/spark/fuel"
 framework): **physical input → trigger mechanism → processing → output →
 upstream**. Findings get IDs (`F-n` for the 2026-07-04 code audit, `D-n`
 for datasheet-driven findings, `V-n` for the 2026-07-05/06 Visualizer/SDK
-User Guide chip-config audit) and carry forward between entries until
-closed — an audit isn't just what's newly broken, it's the standing state
-of everything found so far.
+User Guide chip-config audit, `M-n` for the speed-training/mode surface,
+`U-n` for the web-UI redesign + flight-physics + tracer surface) and carry
+forward between entries until closed — an audit isn't just what's newly
+broken, it's the standing state of everything found so far.
 
 Primary sources live at `~/Desktop/datasheets/` — see
-`datasheets-manifest.md` in this folder.
+`datasheets-manifest.md` in this folder. PGA Tour ground-truth for the
+flight engine lives at `~/Desktop/datasheets/pgatourstats/`.
+
+---
+
+## Audit #8 — 2026-07-07 (U-series: web-UI redesign + flight physics + ball tracer, hostile-dirt audit)
+
+Surface: the `ui_redesign.patch` work against OpenFlight upstream — the
+"Calibrated Instrument" web UI, the RK4 drag+Magnus flight engine, and the
+new ball tracer. Everything runs off the mock server (no hardware), so the
+mock's socket surface *is* the trigger stage for this audit. Both servers
+were shut down and relaunched clean before the sweep; every UI control was
+pressed; hostile payloads were fired at every socket handler with a
+liveness probe between each.
+
+### The physics finding that motivated the audit
+
+**U-0 — flight engine flew systematically flat (apex ~21% low), undetected
+for the life of the code.** Root cause of the *miss*, not just the bug:
+`apex_yards` was computed but never displayed and never asserted. Upstream
+`test_ballistics.py` only checks broad carry *ranges* (driver 250–300) and
+monotonic properties; carry looked healthy (3.4% mean error) because two
+aero errors — slightly too little lift, slightly too little drag —
+**cancel in carry but not in height**. The bug became visible the instant
+apex was surfaced (tracer arcs + Peak Height tiles graded against the tour
+table), reading LOW everywhere. Fixed by tuning the four aero constants
+against all 12 TrackMan tour rows at ISA sea level (ρ=1.225, 15 °C) and RAW
+carry: mean apex error 21.5% → 3.2%, carry 3.4% → 2.2%, hang times into
+real driver territory (6.7 s). **Standing rule adopted: every displayed
+quantity gets a ground-truth test; un-displayed, un-asserted quantities rot
+silently.** Guarded by `tests/test_ballistics_tour.py` (per-club carry
+±8% / apex ±10%, fleet means ≤3%/≤5%, physical hang times — the pre-tune
+constants fail it hard); retune script preserved at
+`scripts/tune_ballistics.py`.
+
+### Dirt-audit findings (hostile socket payloads)
+
+| ID | Sev | Status | Finding |
+|---|---|---|---|
+| U-1 | **MED** | **FIXED 2026-07-07** | `set_session_mode` did `(data or {}).get("mode")`; a **non-dict payload** (bare string `"speed"` instead of `{"mode": "speed"}`) threw `AttributeError` and **killed the socketio worker thread** — silent to the client, dead handler after. `set_club` had the identical latent crash (`data.get(...)` on a non-dict). Both now coerce via `isinstance(data, dict)`. `set_radar_config` was already safe (its `in data` runs inside a `try/except`). Pinned by `tests/test_server_dirt.py`. |
+| U-2 | **MED** | **FIXED 2026-07-07** | `simulate_custom_shot` passed payload values **straight through unvalidated** — `{"ball_speed_mph": -50}`, `0`, `500`, `"fast"`, `NaN` all minted real "shots" into session stats (a 500 mph shot drove Max Ball to the 250 clamp). Now each numeric is coerced to finite and clamped to a physical range (ball 10–250 mph, spin 0–13000, launch 0.5–60°, side/axis ±45°); non-numeric falls back to the mock's own random generation; non-string club is ignored. |
+| U-3 | LOW | **FIXED 2026-07-07** | Degenerate flight (a clamped downward launch integrated to a −0.0 yd "carry" in one step) attached a garbage trajectory to the tracer. `_attach_trajectory` now bails when `carry < 1 yd` or `flight_time < 0.2 s` — no trace beats a bad trace (honest-instrumentation rule). |
+
+### Verified good (no finding)
+
+- **No server exceptions and no browser console errors** across the full
+  hostile battery + button sweep after the fixes (26 dirt cases, all
+  handlers survive; liveness confirmed between each).
+- **Number coherence across views:** one shot read identically on the Live
+  tile, the Shots ledger row, and (as Max) the Stats aggregate; unit toggle
+  converts value *and* tour reference together; Clear cascades to Live
+  standby + Stats empty + tracer "awaiting first shot".
+- **Every control pressed:** theme toggle (both ways), LH/RH, unit cycle,
+  Indoor/Outdoor/Speed mode picker (lit from the server handshake; garbage
+  modes rejected with an error, never a crash), club picker + dropdown,
+  debug Status/Tuning tabs (sliders correctly disabled in mock), camera
+  "not available" state, shutdown dialog (Cancel path), pagination, stats
+  club tabs incl. Speed Training, the 5-tap Launch Daddy easter egg
+  (activates and survives a shot), `/display` TV route (Peak metric
+  present), responsive 375 px (no horizontal overflow, nav wraps).
+- **Speed mode correctness:** swing cards, no tracer, ball view returns on
+  switch back; mid-mode-flip shows the last real ball shot, never a 0-mph
+  card.
+- **Full suites:** 890 Python (872 + 18 new dirt regressions), 6 skipped;
+  45 UI tests; production build clean. Patch re-applies on a virgin
+  upstream clone in wizard order (`session_mode` → `simulate_custom_shot`
+  → `ui_redesign`).
+
+### Why these survived earlier "every-button" audits
+
+Audit #3 (M-series) pressed every button of the *speed-training/mode*
+surface but predated the redesign, the flight-physics exposure, and the
+tracer — none of these socket-hardening or apex-accuracy gaps existed then.
+U-series is the first audit to hold the **web-UI + physics + tracer**
+surface to the same dirt standard the acquisition layer already had.
 
 ---
 

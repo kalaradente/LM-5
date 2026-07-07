@@ -199,10 +199,18 @@ index 4630ae0..b9ac19e 100644
      @property
      def ball_speed_ms(self) -> float:
 diff --git a/src/openflight/server.py b/src/openflight/server.py
-index 89d88c8..5701555 100644
+index 89d88c8..7846a43 100644
 --- a/src/openflight/server.py
 +++ b/src/openflight/server.py
-@@ -867,6 +867,9 @@ def shot_to_dict(shot: Shot) -> dict:
+@@ -6,6 +6,7 @@ Provides real-time shot data to the web frontend via Flask-SocketIO.
+ 
+ import json
+ import logging
++import math
+ import os
+ import random
+ import statistics
+@@ -867,6 +868,9 @@ def shot_to_dict(shot: Shot) -> dict:
          # "speed-training", ...). The UI uses it to render speed-training
          # swings as club-speed-only cards and keep them out of ball stats.
          "mode": shot.mode,
@@ -212,7 +220,66 @@ index 89d88c8..5701555 100644
      }
  
  
-@@ -1785,6 +1788,54 @@ def _apply_calculated_spin(shot: Shot) -> bool:
+@@ -1396,7 +1400,9 @@ def handle_get_trigger_status():
+ @socketio.on("set_club")
+ def handle_set_club(data):
+     """Handle club selection change."""
+-    club_name = data.get("club", "driver")
++    # Audit U-1: guard non-dict payloads (same crash class as
++    # set_session_mode) — a bare-string payload would throw here.
++    club_name = data.get("club", "driver") if isinstance(data, dict) else "driver"
+     try:
+         club = ClubType(club_name)
+         if monitor:
+@@ -1445,13 +1451,29 @@ def handle_simulate_custom_shot(data):
+     initial aim/push-pull direction, independent of the curve.
+     """
+     if monitor and isinstance(monitor, MockLaunchMonitor):
++        if not isinstance(data, dict):
++            data = {}
++
++        def _clean(key, lo, hi):
++            """Numeric + finite + clamped to a physical range, else None
++            (None falls back to the mock's own random generation). Audit
++            U-1: unvalidated payloads minted 0/-50/500 mph 'shots' straight
++            into session stats."""
++            try:
++                v = float(data.get(key))
++            except (TypeError, ValueError):
++                return None
++            if not math.isfinite(v):
++                return None
++            return min(max(v, lo), hi)
++
+         monitor.simulate_shot(
+-            ball_speed=data.get("ball_speed_mph"),
+-            spin_rpm=data.get("spin_rpm"),
+-            launch_v=data.get("launch_angle_deg"),
+-            launch_h=data.get("side_angle_deg"),
+-            spin_axis=data.get("spin_axis_deg"),
+-            club=data.get("club"),
++            ball_speed=_clean("ball_speed_mph", 10.0, 250.0),
++            spin_rpm=_clean("spin_rpm", 0.0, 13000.0),
++            launch_v=_clean("launch_angle_deg", 0.5, 60.0),
++            launch_h=_clean("side_angle_deg", -45.0, 45.0),
++            spin_axis=_clean("spin_axis_deg", -45.0, 45.0),
++            club=data.get("club") if isinstance(data.get("club"), str) else None,
+         )
+ 
+ 
+@@ -1582,7 +1604,10 @@ def handle_set_session_mode(data=None):
+     that don't support live mode switching (mock, rolling-buffer) simply
+     don't expose the method and the event reports unsupported.
+     """
+-    mode = (data or {}).get("mode")
++    # Audit U-1: a non-dict payload (e.g. the bare string "speed" instead
++    # of {"mode": "speed"}) threw AttributeError here and killed the
++    # handler thread. Coerce to a dict first.
++    mode = data.get("mode") if isinstance(data, dict) else None
+     if not monitor or not hasattr(monitor, "set_session_mode"):
+         socketio.emit(
+             "session_mode_error",
+@@ -1785,6 +1810,58 @@ def _apply_calculated_spin(shot: Shot) -> bool:
      return True
  
  
@@ -237,6 +304,10 @@ index 89d88c8..5701555 100644
 +        if conditions is None:
 +            return
 +        traj = simulate(conditions)
++        # Degenerate flight (audit U-1: a downward launch "landed" at
++        # -0.0 yd in one integration step): no trace beats a garbage trace.
++        if traj.carry_yards < 1.0 or traj.flight_time_s < 0.2:
++            return
 +        pts = traj.points
 +        if len(pts) > _TRACER_MAX_POINTS:
 +            step = (len(pts) - 1) / (_TRACER_MAX_POINTS - 1)
@@ -267,7 +338,7 @@ index 89d88c8..5701555 100644
  def on_shot_detected(shot: Shot):
      """Callback when a shot is detected - emit to all clients."""
      global ball_detected, ball_detection_confidence  # pylint: disable=global-statement
-@@ -2207,6 +2258,11 @@ def on_shot_detected(shot: Shot):
+@@ -2207,6 +2284,11 @@ def on_shot_detected(shot: Shot):
              exc=e,
          )
  
@@ -279,7 +350,7 @@ index 89d88c8..5701555 100644
      # Emit shot with launch angle data included
      try:
          shot_data = shot_to_dict(shot)
-@@ -2406,10 +2462,14 @@ class MockLaunchMonitor:
+@@ -2406,10 +2488,14 @@ class MockLaunchMonitor:
      # TrackMan averages for amateur golfers: (avg_ball_speed, std_dev, smash_factor)
      _CLUB_BALL_SPEEDS = {
          ClubType.DRIVER: (143, 12, 1.45),
@@ -294,7 +365,7 @@ index 89d88c8..5701555 100644
          ClubType.HYBRID_5: (118, 9, 1.37),
          ClubType.HYBRID_7: (112, 8, 1.35),
          ClubType.HYBRID_9: (106, 8, 1.33),
-@@ -2431,10 +2491,14 @@ class MockLaunchMonitor:
+@@ -2431,10 +2517,14 @@ class MockLaunchMonitor:
      # Spin rates (avg_rpm, std_dev) — drivers: low spin, wedges: high spin
      _CLUB_SPIN = {
          ClubType.DRIVER: (2700, 400),
@@ -309,7 +380,7 @@ index 89d88c8..5701555 100644
          ClubType.HYBRID_5: (4200, 500),
          ClubType.HYBRID_7: (4600, 500),
          ClubType.HYBRID_9: (5000, 500),
-@@ -2456,10 +2520,14 @@ class MockLaunchMonitor:
+@@ -2456,10 +2546,14 @@ class MockLaunchMonitor:
      # Launch angles in degrees (avg, std_dev) — drivers: low, wedges: high
      _CLUB_LAUNCH = {
          ClubType.DRIVER: (11.0, 2.0),
@@ -324,7 +395,7 @@ index 89d88c8..5701555 100644
          ClubType.HYBRID_5: (15.0, 2.0),
          ClubType.HYBRID_7: (16.5, 2.0),
          ClubType.HYBRID_9: (18.0, 2.5),
-@@ -2484,6 +2552,33 @@ class MockLaunchMonitor:
+@@ -2484,6 +2578,33 @@ class MockLaunchMonitor:
          self._running = False
          self._shot_callback = None
          self._current_club = ClubType.DRIVER
@@ -358,7 +429,7 @@ index 89d88c8..5701555 100644
  
      def connect(self):
          """Connect to mock radar (no-op)."""
-@@ -2536,6 +2631,23 @@ class MockLaunchMonitor:
+@@ -2536,6 +2657,23 @@ class MockLaunchMonitor:
  
          avg_speed, std_dev, smash = self._CLUB_BALL_SPEEDS.get(self._current_club, (120, 15, 1.35))
  
@@ -481,6 +552,104 @@ index 0000000..248268f
 +    for club, ball, launch, spin, _, _ in TOUR_ROWS:
 +        t = _fly(ball, launch, spin).flight_time_s
 +        assert 5.0 <= t <= 8.0, f"{club}: hang time {t:.1f}s outside physical range"
+diff --git a/tests/test_server_dirt.py b/tests/test_server_dirt.py
+new file mode 100644
+index 0000000..9a6284d
+--- /dev/null
++++ b/tests/test_server_dirt.py
+@@ -0,0 +1,92 @@
++"""Audit U-1 regressions: socket handlers must survive hostile payloads.
++
++The mock server is the surface the whole UI (and any third-party client)
++drives. Before U-1, non-dict payloads to the control handlers threw
++unhandled AttributeErrors that killed the socketio worker thread, and
++unvalidated simulate_custom_shot payloads minted 0/-50/500 mph "shots"
++straight into the session. These tests pin both fixes.
++"""
++
++import math
++
++import pytest
++
++from openflight import server as server_module
++from openflight.server import MockLaunchMonitor
++
++
++@pytest.fixture
++def mock_monitor(monkeypatch):
++    m = MockLaunchMonitor()
++    monkeypatch.setattr(server_module, "monitor", m)
++    monkeypatch.setattr(server_module, "mock_mode", True)
++    return m
++
++
++# --- Non-dict payloads must not raise (they killed the worker thread) ---
++
++@pytest.mark.parametrize("payload", ["speed", 42, None, ["a", "b"]])
++def test_set_session_mode_survives_non_dict(mock_monitor, payload):
++    # Must not raise; unknown/garbage mode reports an error, never crashes.
++    server_module.handle_set_session_mode(payload)
++
++
++@pytest.mark.parametrize("payload", ["driver", 42, None, ["a"]])
++def test_set_club_survives_non_dict(mock_monitor, payload):
++    server_module.handle_set_club(payload)
++
++
++@pytest.mark.parametrize("payload", ["boom", [1, 2, 3], 99, None])
++def test_simulate_custom_shot_survives_non_dict(mock_monitor, payload):
++    server_module.handle_simulate_custom_shot(payload)
++
++
++# --- simulate_custom_shot value hygiene ---
++
++def _last_shot(m):
++    return m.get_shots()[-1]
++
++
++def test_absurd_ball_speed_is_clamped(mock_monitor):
++    server_module.handle_simulate_custom_shot({"ball_speed_mph": 500})
++    assert _last_shot(mock_monitor).ball_speed_mph <= 250.0
++
++
++def test_negative_ball_speed_is_clamped_up(mock_monitor):
++    server_module.handle_simulate_custom_shot({"ball_speed_mph": -50})
++    assert _last_shot(mock_monitor).ball_speed_mph >= 10.0
++
++
++def test_non_finite_and_garbage_fall_back_to_random(mock_monitor):
++    # NaN / string / None must not produce a NaN shot; the mock fills a
++    # plausible random value instead.
++    for bad in (float("nan"), "fast", None, float("inf")):
++        server_module.handle_simulate_custom_shot({"ball_speed_mph": bad})
++        s = _last_shot(mock_monitor)
++        assert math.isfinite(s.ball_speed_mph)
++        assert 10.0 <= s.ball_speed_mph <= 250.0
++
++
++def test_spin_is_clamped_to_physical_range(mock_monitor):
++    server_module.handle_simulate_custom_shot({"ball_speed_mph": 150, "spin_rpm": 100000})
++    assert 0.0 <= _last_shot(mock_monitor).spin_rpm <= 13000.0
++
++
++def test_bad_club_falls_back(mock_monitor):
++    # A non-string / unknown club must not crash; mock keeps its current club.
++    server_module.handle_simulate_custom_shot({"ball_speed_mph": 150, "club": 12345})
++    server_module.handle_simulate_custom_shot({"ball_speed_mph": 150, "club": "banana"})
++    assert _last_shot(mock_monitor).ball_speed_mph >= 10.0
++
++
++def test_downward_launch_produces_no_tracer_trajectory(mock_monitor):
++    # A degenerate flight (clamped launch floor still near-ground) must not
++    # attach a garbage trace; _attach_trajectory bails on sub-yard carries.
++    server_module.handle_simulate_custom_shot(
++        {"ball_speed_mph": 150, "launch_angle_deg": -10}
++    )
++    shot = _last_shot(mock_monitor)
++    # If a trajectory attached at all, it must be a real flight.
++    if shot.trajectory is not None:
++        assert shot.trajectory["carry_yards"] >= 1.0
++        assert shot.trajectory["apex_yards"] >= 0.0
 diff --git a/ui/index.html b/ui/index.html
 index 592716b..b378260 100644
 --- a/ui/index.html
