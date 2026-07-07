@@ -206,6 +206,27 @@ Running list of open items. Newest relevant item first per section.
 
 ## Software
 
+- [x] **Placement wiggle (5-7 ft) + teed-ball auto-detection (2026-07-06,
+      Johnny's request, audit M-7)**: sensor placement anywhere in the
+      5-7 ft band now measured-good (accuracy held; what broke were the
+      anti-phantom fences, all implicitly sized at 2.0 m -- driver misses
+      at 7 ft, a 37.7-deg bump corruption from the teed-ball static
+      stitching onto flight). _find_teed_balls() locks balls at rest
+      (compact + persistent + zero-Doppler + VANISHES at impact -- the
+      vanish is unfakeable by walls/golfer) and the suffix judge consumes
+      the locks: no suffix may start on a resting-ball row, and a suffix
+      born at a lock as it vanishes gets relaxed span/fill/gain floors
+      (kinematic gates stay full). tee_range_m rides every shot record
+      for placement validation. Best-effort BY DESIGN: no lock = exactly
+      the old pipeline. Envelopes across 4 placements x 20 seeds: misses
+      2/320 (both one brutal merge seed, V-7-class residual), phantoms
+      0/160, swings 0/240, M-1 leaks 0. Sweep now cycles TEE_SWEEP.
+      BENCH (rung 3): does a static teed ball clear CFAR against the mat
+      at all? If not, everything still works -- locks just never form.
+      If yes, tune teeball detectability + the 0.9-3.2 m tee zone against
+      reality; UI surfacing of tee_range_m ("ball detected at 6.2 ft")
+      is a nice follow-on once real lock rates are known.
+
 - [ ] **Auto-start OpenFlight on Pi boot**: run_iwr6843.py should come up
       by itself when the Pi powers on (walk up, swing, no SSH). Likely a
       systemd unit installed by a new setup_wizard.sh step: After=

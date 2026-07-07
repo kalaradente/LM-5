@@ -269,6 +269,16 @@ Highlights a fresh session should know:
   mode-switch machinery is execution-proven end to end over synthesized
   TLV wires (swing and shot published across live switches, cfg
   re-streams line-verified, rapid switches coalesce).
+- **Placement wiggle + teed-ball auto-detection (2026-07-06, M-7)**: the
+  unit works anywhere 5–7 ft behind the ball. `_find_teed_balls()` locks
+  balls at rest (persistent zero-Doppler clusters that VANISH at impact)
+  and the ballistic-suffix judge consumes the locks (resting-row
+  excision + anchored-birth relaxation of the anti-phantom fences, which
+  were all implicitly sized at 2.0 m and ate drives at 7 ft).
+  `tee_range_m` rides every shot record. Best-effort: no lock = old
+  behavior exactly. Envelopes across placements: 2/320 misses (one
+  brutal seed), 0/160 phantoms, 0/240 swing failures. Rung-3 question:
+  does a real static ball clear CFAR against the mat at all.
 
 **Still open (all hardware-gated):**
 - **Place the K-MC1-RFB-00D order** (5V variant! see

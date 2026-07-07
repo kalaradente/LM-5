@@ -92,9 +92,30 @@ an object that's only fully radial for a few ms at arc bottom.
 Known limit, flagged not hidden (same policy as the audit log): a swing
 whose arc-bottom radial speed lands in the fold-shoulder band
 (≈ v_max_ext, ~84 mph indoor) with a detection gap on the bottom itself is
-fold-ambiguous — measured hostile-sim envelope ±10 mph there, ≤6 mph
-everywhere else, ~2 mph typical. The estimator detects the band and tags
-the record `speed_fold_ambiguous` in `captures/shots.jsonl`.
+fold-ambiguous — measured hostile-sim envelope ±16 mph worst-case there,
+≤6 mph everywhere else, ~2 mph typical. The estimator detects the band and
+tags the record `speed_fold_ambiguous` in `captures/shots.jsonl`.
+
+## Placement & teed-ball auto-detection
+
+Place the unit anywhere **5–7 ft behind the ball** on the target line
+(the mounting doc's 2 m is the center of that band, not a requirement —
+measured hostile envelopes hold across the whole band; audit M-7). No
+configuration: the pipeline **auto-detects balls at rest** — compact,
+persistent, zero-Doppler returns in the tee zone that VANISH at impact
+(that vanish is what no wall, tee box, or swaying golfer can fake) — and
+places filters around them: a shot's track may not begin on a
+resting-ball return, and a track born at a detected ball right as it
+vanishes gets the benefit of the doubt against the anti-phantom fences
+(which are what used to eat drives at 7 ft, where only ~3.9 m of gate
+remains after impact merge). Every shot records `tee_range_m`, the
+measured sensor-to-ball distance, in `captures/shots.jsonl` — check it
+after setup to validate your placement.
+
+Detection is best-effort BY DESIGN: whether a static ball clears CFAR
+against the mat on real hardware is a bring-up rung-3 question, so
+nothing requires it — no ball lock means the classifier runs exactly as
+before, full fences.
 
 ## Integration
 

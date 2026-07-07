@@ -73,6 +73,37 @@ M-1b gross-rate gate rejects junk-supported shoulder peaks but cannot
 resolve genuine in-band ambiguity (same physics as before). Real-phone
 drag feel (M-2) and everything hardware-gated remain bench items.
 
+### Same-day addendum: M-7 — placement wiggle + teed-ball auto-detection
+
+Johnny's follow-up brief: users should be able to place the unit 5–7 ft
+behind the ball with wiggle room — "can we autodetect balls and then
+place filters around them?" First step was measuring what placement
+actually breaks, which required teaching the simulator two things
+reality already does: a parameterized sensor-to-ball distance (`tee_y`)
+and a **teed-ball static** (a weak, flickery zero-Doppler return at the
+tee that vanishes at impact — `teeball_p=0.45`, deliberately marginal
+because real static-ball CFAR visibility against the mat is a rung-3
+bench question). The honest baseline: accuracy already tolerates 5–7 ft
+(driver/iron ≤1.3 mph mean error at every distance, 0 phantoms), BUT
+the teed-ball static and placement interacted with the V-7/M-3 fences,
+which were all implicitly sized at 2.0 m:
+
+| ID | Sev | Finding | Resolution |
+|----|-----|---------|------------|
+| M-7a | **HIGH — FIXED** | **Driver misses at 6–7 ft placement (measured up to 3/20/seed-set)**: at 2.13 m a 165 mph ball has only ~3.9 m of gate left and impact merge eats its birth rows (worst measured: first visible flight row 0.82 m downrange), so real flights fell below the 40 ms span / 0.6 fill / 1.2 m gain floors that exist to kill phantoms. Also the **teed-ball static stitches onto the flight track** as a resting prefix (impact handoff in reverse), and one 7 ft bump-and-run fitted resting rows as flight — published launch **37.7° wrong**. |
+| M-7b | **FIXED (the feature)** | **`_find_teed_balls()`**: compact, persistent, near-zero-Doppler clusters in the tee zone (0.9–3.2 m, ±25° az) that **VANISH before the capture ends** — the vanish is what separates a ball from bay clutter (walls persist) and is evidence nothing but a shot can arrange. Consumed two ways in `_pick_ball_track`: (1) suffixes may not START on a resting-ball row (kills the 37.7° class), and (2) a suffix born within 0.9 m of a lock inside [−30,+60] ms of its vanish is **anchored**: span/fill/gain floors relax (0.028 s / 0.45 / 0.9 m) because the vanish coincidence is independent evidence, while every kinematic gate (monotonic, accel, anti-gravity, rate-consistency) stays at full strength. NO LOCK = EXACTLY the old behavior — detection is best-effort by design and nothing downstream requires it. Each shot records `tee_range_m` (nearest lock), giving the user placement validation for free; measured dead-on (1.52/1.83/2.00/2.13) across the sweep. |
+| M-7c | **FIXED** | Two swing-side placement defects: the M-1b gross-rate sanity rejected whole CAPTURES when the top candidate was a junk fold-branch pair (measured: an 85 mph claim on a track moving 3.3 m/s at 5 ft — a real rep thrown away); moved INSIDE candidate selection so inconsistent candidates lose their turn and the next supported peak gets judged. And a mis-arbitrated branch at 7 ft read +15.3 mph just past the ambiguity flag's band — the estimate-side band widened to 1.15·v_max_ext and `SWING_AMBIG_TOL` set to the measured 16. A gross-ratio flag was tried first and measured USELESS (accurate swings p5=0.76/median 0.84; the two bad reads at 0.76 and 0.92, inside the accurate distribution) — recorded here so nobody re-invents it. |
+
+**Final measured envelopes across 5–7 ft (20 seeds × 4 placements):
+real-shot misses 2/320** (both driver seed 16, a merge-eats-everything
+draw of the same class as V-7's accepted 1-in-20 chip fragmentation —
+not chased, per V-7's own overfitting lesson), **phantoms 0/160, swing
+failures 0/240** (~50% of 80–95 mph swings carry the fold-ambiguous
+flag — their raws genuinely touch the shoulder; 105/120 unflagged),
+**M-1 leaks 0/20**. The sweep now cycles placements (`TEE_SWEEP`) so all
+of this is regression-guarded, and the teed-ball static is on by
+default in every synthesized capture.
+
 ---
 
 ## Audit #6 — 2026-07-05/06 (chip-configuration audit vs the Demo Visualizer + SDK User Guide)

@@ -587,7 +587,65 @@ class IWR6843Source:
             i = j
         return [np.array(tr["pts"]) for tr in tracks]
 
-    def _pick_ball_track(self, tracks: list, min_fixes: int):
+    def _find_teed_balls(self, rows: list) -> list:
+        """Locate TEED BALLS at rest in this capture (audit M-7): compact,
+        persistent, near-zero-Doppler clusters in the tee zone that VANISH
+        before the capture ends. Returns [(xyz ndarray, t_gone), ...].
+
+        The vanish criterion is what separates a ball from bay clutter: a
+        wall/tee-box static persists to the last frame; a teed ball
+        disappears at impact. This is also why the lock is trustworthy
+        POSITIVE evidence for the suffix judge: "a static object at ball
+        height stopped existing right when this track was born" is
+        independent of everything the kinematic gates measure.
+
+        Placement wiggle is the point: the tee zone spans 0.9-3.2 m so the
+        unit works anywhere from ~3 to ~10 ft behind the ball, and the
+        measured range rides every shot record (tee_range_m) so the user
+        can see where the radar thinks their ball is. Detection is
+        best-effort BY DESIGN: whether a static ball clears CFAR against
+        the mat is a rung-3 bench question, so nothing downstream ever
+        REQUIRES a lock -- no lock means the classifier behaves exactly
+        as before (V-7 gates at full strength)."""
+        if not rows:
+            return []
+        arr = np.asarray(rows)
+        t_end = float(arr[:, 0].max())
+        # Resting rows: |raw Doppler| within ~1 bin of zero. (A resting
+        # ball cannot alias -- folding only relabels FAST objects.)
+        still = arr[np.abs(arr[:, 4]) <= 2.5]
+        if still.shape[0] < 6:
+            return []
+        locks = []
+        used = np.zeros(still.shape[0], dtype=bool)
+        for i in np.argsort(still[:, 0]):
+            if used[i]:
+                continue
+            near = (np.linalg.norm(still[:, 1:4] - still[i, 1:4], axis=1)
+                    <= 0.30) & ~used
+            grp = still[near]
+            if grp.shape[0] < 6:
+                continue
+            used |= near
+            pos = grp[:, 1:4].mean(axis=0)
+            rng_m = float(np.linalg.norm(pos))
+            az = math.degrees(math.atan2(pos[0], pos[1]))
+            el = math.degrees(math.atan2(pos[2], math.hypot(pos[0], pos[1])))
+            rms = float(np.sqrt(np.mean(
+                np.sum((grp[:, 1:4] - pos) ** 2, axis=1))))
+            t_first, t_last = float(grp[:, 0].min()), float(grp[:, 0].max())
+            if not (0.9 <= rng_m <= 3.2 and abs(az) <= 25.0
+                    and abs(el) <= 18.0 and rms <= 0.15):
+                continue
+            if t_last - t_first < 0.05:        # a blip, not a resting ball
+                continue
+            if t_end - t_last < 0.035:         # never vanished: wall/box
+                continue
+            locks.append((pos, t_last))
+        return locks
+
+    def _pick_ball_track(self, tracks: list, min_fixes: int,
+                         locks: Optional[list] = None):
         """Find the best BALLISTIC SUFFIX across all tracks; returns
         (range_gain, track_index, start_index) or None.
 
@@ -654,9 +712,52 @@ class IWR6843Source:
                 if st in tried:
                     continue
                 tried.add(st)
+                # TEED-BALL LOCK consumers (audit M-7). (a) A suffix must
+                # not START on a resting-ball row: the static teed ball
+                # stitches onto the flight track as a near-zero-Doppler
+                # prefix at the same position (impact handoff in reverse),
+                # and a suffix anchored inside it fits resting rows as
+                # "flight" (a 7 ft bump-and-run published launch 37.7 deg
+                # wrong that way). (b) A suffix born AT the lock right
+                # around the moment the resting ball VANISHED is a shot
+                # with independent evidence, so the span/fill floors --
+                # phantom fences sized at 2.0 m placement -- relax for it:
+                # at 7 ft a 165 mph drive has only ~3.9 m of gate left
+                # and merge eats its birth rows, leaving ~35 ms of flight
+                # that the unlocked 40 ms floor rejected (measured 3/20
+                # driver misses). The kinematic gates (monotonic rise,
+                # accel, anti-gravity, rate-consistency) stay at FULL
+                # strength either way; no lock means nothing changes.
+                anchored = False
+                if locks:
+                    p_st = tr[st, 1:4]
+                    if (abs(tr[st, 4]) <= 2.5
+                            and any(np.linalg.norm(p_st - lp) <= 0.30
+                                    for lp, _ in locks)):
+                        continue           # resting-ball row, not a birth
+                    # 0.90 m radius: impact merge can hide the first
+                    # visible flight row for many frames at driver speed
+                    # (measured worst case: birth 0.82 m downrange of the
+                    # tee). The vanish-time window is what keeps the
+                    # anchor honest -- a suffix must be born within
+                    # [-30, +60] ms of the resting ball's disappearance,
+                    # which nothing but the shot that removed it can
+                    # arrange.
+                    anchored = any(
+                        np.linalg.norm(p_st - lp) <= 0.90
+                        and (tg - 0.03) <= tr[st, 0] <= (tg + 0.06)
+                        for lp, tg in locks)
                 r, t = r_all[st:], tr[st:, 0]
                 gain = float(r[-1] - r[0])
-                if gain < 1.2 or (best is not None and gain <= best[0]):
+                # Anchored gain floor 0.9 m (audit M-7): a split flight
+                # track's first fragment can gain just under the 1.2 m
+                # floor (measured 1.19 m on a merge-delayed driver birth).
+                # A resting ball cannot fake 0.9 m of departure, and a
+                # club follow-through that far is caught by the rate/
+                # anti-gravity gates -- the vanish-time anchor makes the
+                # relaxation safe.
+                if gain < (0.9 if anchored else 1.2) \
+                        or (best is not None and gain <= best[0]):
                     continue
                 # Physical rate ceiling (audit V-7): gain/span is the
                 # suffix's implied mean radial speed. No golf ball moves
@@ -674,7 +775,8 @@ class IWR6843Source:
                 # BOTH holes at once and became a 97 mph phantom shot on
                 # a practice swing, at confidence 0.94.
                 span = float(t[-1] - t[0])
-                if span < 0.04 or gain / span > 105.0:
+                if span < (0.028 if anchored else 0.04) \
+                        or gain / span > 105.0:
                     continue
                 # FILL RATIO (audit V-7, floor raised in M-3): a ball
                 # inside the gate is a strong coherent reflector -- the
@@ -692,7 +794,8 @@ class IWR6843Source:
                 # boundary through every kinematic gate (its range-rate is
                 # genuinely ball-flat across the bottom; fill is the only
                 # fence left).
-                if len(r) / (span / self.frame_period + 1.0) < 0.6:
+                if len(r) / (span / self.frame_period + 1.0) \
+                        < (0.45 if anchored else 0.6):
                     continue
                 lag = max(1, len(r) // 8)
                 diffs = r[lag:] - r[:-lag]
@@ -834,7 +937,13 @@ class IWR6843Source:
         if len(moving) < self.MIN_BALL_FIXES:
             return None
         tracks = self._cluster_tracks(moving)
-        picked = self._pick_ball_track(tracks, self.MIN_BALL_FIXES)
+        # Teed-ball auto-detection (audit M-7): best-effort locks on balls
+        # at rest, consumed by the suffix judge (resting-row excision +
+        # anchored-birth relaxation) and reported on the record so the
+        # user can see the measured placement. No lock = exactly the old
+        # behavior.
+        locks = self._find_teed_balls(moving)
+        picked = self._pick_ball_track(tracks, self.MIN_BALL_FIXES, locks)
         if picked is None:
             return None      # no ball-like object (practice swing, noise)
         _, ball_ti, ball_st = picked
@@ -1099,6 +1208,12 @@ class IWR6843Source:
                "geometry_confidence": round(agree, 2)}
         if launch_raw is not None:
             out["launch_angle_raw_deg"] = round(launch_raw, 1)
+        if locks:
+            # Where the radar saw the ball at rest (nearest lock to this
+            # shot's birth): free placement validation on every record.
+            birth = ball_tr[0, 1:4]
+            lp, _ = min(locks, key=lambda l: np.linalg.norm(birth - l[0]))
+            out["tee_range_m"] = round(float(np.linalg.norm(lp)), 2)
         return out
 
     # ---- speed-training mode (club only, no ball, no shot) ----------------
@@ -1173,12 +1288,33 @@ class IWR6843Source:
         if len(cands) < 2:
             return None
         cands.sort(key=lambda c: -c[0])
+        # Candidate selection: supported (a same-track neighbor within
+        # 10%) AND gross-rate-consistent (audit M-1b, moved inside the
+        # loop in M-7): the winning track's actual range motion around
+        # the claimed peak must roughly match the claim -- at arc bottom
+        # the head's motion is fully radial. A junk fold-branch pair can
+        # be mutually "supporting" while its track physically moves at
+        # chip speed (measured: an 85 mph claim on a track moving
+        # 3.3 m/s at 5 ft placement); rejecting the CAPTURE for that
+        # threw away real reps, so an inconsistent candidate now just
+        # loses its turn and the next supported peak gets judged.
+        # Sparse windows (burst gaps) keep the candidate -- rejection
+        # only on positive evidence of mismatch.
         peak = None
         for i, (c, t_c, tj) in enumerate(cands):
-            if any(oj == tj and 0.90 * c <= oc <= c
-                   for j, (oc, _, oj) in enumerate(cands) if j != i):
-                peak = (c, t_c, tj)
-                break
+            if not any(oj == tj and 0.90 * c <= oc <= c
+                       for j, (oc, _, oj) in enumerate(cands) if j != i):
+                continue
+            t_tr = tracks[tj][:, 0]
+            near_pk = np.abs(t_tr - t_c) <= 0.020
+            w_t = t_tr[near_pk]
+            w_r = np.linalg.norm(tracks[tj][near_pk][:, 1:4], axis=1)
+            if w_t.size >= 3 and (w_t.max() - w_t.min()) >= 0.006:
+                g_c = (w_r.max() - w_r.min()) / (w_t.max() - w_t.min())
+                if g_c < 0.45 * c:
+                    continue           # fold-branch junk pair, not motion
+            peak = (c, t_c, tj)
+            break
         if peak is None or peak[0] < self.BALL_MIN_SPEED:
             return None
         # KNOWN FOLD LIMIT, flagged not hidden: a fast head (95 mph =
@@ -1203,33 +1339,21 @@ class IWR6843Source:
         tr = tracks[tj]
         t_tr = tr[:, 0]
         near_pk = np.abs(t_tr - t_pk) <= 0.020
-        # GROSS-RATE SANITY (audit M-1b): the winning track's actual range
-        # motion around the claimed peak must roughly match the claim -- at
-        # arc bottom the head's motion is fully radial, so a real peak sits
-        # near the track's own gross dr/dt (>=0.9x within noise). When a
-        # ball fragments below _pick_ball_track's floor (the known 1-in-20
-        # chip case), leftover junk rows can unfold to the fold shoulder
-        # and mutually "support" an 84.7 mph swing on a track whose real
-        # motion is chip-slow -- gross rate ~8 m/s against a 37.9 claim.
-        # Reject only on POSITIVE evidence of mismatch (window evaluable
-        # and rate far under the claim); sparse windows keep the swing, so
-        # burst-gap seeds aren't false-rejected.
-        w_t, w_r = t_tr[near_pk], np.linalg.norm(tr[near_pk][:, 1:4], axis=1)
-        if w_t.size >= 3 and (w_t.max() - w_t.min()) >= 0.006:
-            gross = (w_r.max() - w_r.min()) / (w_t.max() - w_t.min())
-            if gross < 0.45 * c_pk:
-                print(f"[iwr6843] swing peak {c_pk * MPS_TO_MPH:.0f} mph "
-                      f"inconsistent with its track's range motion "
-                      f"({gross * MPS_TO_MPH:.0f} mph) -> rejected")
-                return None
         raws = tr[near_pk, 4]
-        # Slack of 0.10*v_max_ext on both tests: covers Doppler-bin
+        # Shoulder-evidence slack 0.10*v_max_ext: covers Doppler-bin
         # quantization pushing the observed shoulder below v_max_ext
         # (measured 0.937*v_max_ext in the hostile sim) without reaching
-        # down into genuinely sub-shoulder swings.
+        # down into genuinely sub-shoulder swings. The estimate-side band
+        # is wider (0.15) after audit M-7: a mis-arbitrated branch at 7 ft
+        # placement read 1.12*v_max_ext (+15.3 mph on an 80 mph swing),
+        # just past the old 1.10 band. A gross-range-motion flag was tried
+        # first and measured USELESS (accurate swings' ratios p5=0.76,
+        # median 0.84 -- the two bad reads sat at 0.76 and 0.92, inside
+        # the accurate distribution); the shoulder band is where the
+        # physics actually degenerates, so that's what the flag marks.
         slack = 0.10 * self.v_max_ext
         ambiguous = bool(raws.size and raws.max() >= self.v_max_ext - slack
-                         and c_pk <= self.v_max_ext + slack)
+                         and c_pk <= 1.15 * self.v_max_ext)
         return {"t_impact": t0 + t_pk,      # arc-bottom time: the same
                                             # host-clock anchor role
                                             # t_impact plays for shots
