@@ -269,6 +269,13 @@ Highlights a fresh session should know:
   mode-switch machinery is execution-proven end to end over synthesized
   TLV wires (swing and shot published across live switches, cfg
   re-streams line-verified, rapid switches coalesce).
+- **Auto-CFAR "compressor" (2026-07-06, M-9, Johnny's design)**: the
+  chip's cfarCfg thresholdScale rides an AGC loop -- sidechain = idle
+  scene points/frame (armed only), corridor 1–8, ±1.5 dB steps clamped
+  −6..+12 dB, +3 dB limiter on UART frame-skips, actuated via the
+  safe-point cfg re-stream, reset on mode switch, `cfar_auto_db` stamped
+  on records, `--no-auto-cfar` opt-out. Corridor numbers are rung-3
+  placeholders. Closed-loop verified vs a responsive fake chip.
 - **Placement wiggle + teed-ball auto-detection (2026-07-06, M-7)**: the
   unit works anywhere 5–7 ft behind the ball. `_find_teed_balls()` locks
   balls at rest (persistent zero-Doppler clusters that VANISH at impact)

@@ -206,6 +206,24 @@ Running list of open items. Newest relevant item first per section.
 
 ## Software
 
+- [x] **Automatic CFAR threshold -- "the compressor" (2026-07-06,
+      Johnny's request, audit M-9)**: idle-scene detection density
+      (points/frame, armed only -- captures never feed the sidechain)
+      drives cfarCfg thresholdScale inside a 1-8 pts/frame corridor:
+      flooded -> +1.5 dB steps (automates the V-6 escape hatch), starved
+      -> -1.5 dB (sensitivity for the teed-ball lock), clamp -6..+12 dB,
+      4 s windows / 10 s cooldown, +3 dB limiter on UART frame-skips
+      that bypasses cooldown. Actuates via the mode-switch safe-point
+      cfg re-stream; mode switch resets the term; records carry
+      cfar_auto_db; --no-auto-cfar kills it. Closed-loop verified
+      against a responsive fake chip (converge/hold/limiter/reset/rail).
+      BENCH (rung 3): the corridor numbers (1-8 pts/frame) and step/
+      cooldown tempo are placeholders -- measure a real bay's idle
+      density and retune; also confirm the demo tolerates frequent
+      sensorStop/Start cycles over hours (retunes are rare by design,
+      but power-cycling wear on the chip's calibration is a real
+      question).
+
 - [x] **Placement wiggle (5-7 ft) + teed-ball auto-detection (2026-07-06,
       Johnny's request, audit M-7)**: sensor placement anywhere in the
       5-7 ft band now measured-good (accuracy held; what broke were the

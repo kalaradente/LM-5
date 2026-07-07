@@ -117,6 +117,22 @@ against the mat on real hardware is a bring-up rung-3 question, so
 nothing requires it — no ball lock means the classifier runs exactly as
 before, full fences.
 
+## Automatic CFAR threshold (the "compressor")
+
+The chip's detection threshold rides an automatic gain loop modeled on a
+vocal compressor: the sidechain is the **idle** scene's detection density
+(never a capture — shots are the vocals and are never compressed
+against), the curve is a corridor (~1–8 points/frame), and the makeup/
+reduction moves the `cfarCfg` thresholdScale in slow 1.5 dB steps within
+−6..+12 dB of the session baseline — flooded bay: threshold up ("highs
+down", the audit V-6 escape hatch, now automatic); starved scene:
+threshold down ("lows up", more sensitivity for weak returns like the
+teed ball). A hard limiter steps +3 dB immediately on UART frame-skips
+(real link saturation). Every adjustment prints its reason, every shot
+taken under a nonzero adjustment carries `cfar_auto_db`, a mode switch
+resets the loop, and `--no-auto-cfar` turns it off. Corridor numbers are
+bench-tunable placeholders until rung 3 measures a real bay.
+
 ## Integration
 
 ```python

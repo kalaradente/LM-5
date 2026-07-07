@@ -87,10 +87,39 @@ class IWR6843Source:
     # this is a considered default, not a measurement.
     MOUNT_TILT_DEG = 10.0
 
+    # ---- automatic CFAR threshold ("compressor", audit M-9) --------------
+    # Johnny's model: a compressor on vocals -- bring the lows up and the
+    # highs down. Sidechain = the IDLE scene's detection density (points/
+    # frame while armed, never during a capture: shots are the vocals and
+    # must never be compressed against). Curve: inside the corridor
+    # nothing happens; a flooded scene raises the chip's cfarCfg
+    # thresholdScale in small steps ("highs down" -- this automates the
+    # V-6 escape hatch for bays whose statics would otherwise saturate
+    # the UART), a starved scene lowers it ("lows up" -- more sensitivity
+    # for weak returns like the teed ball when there's headroom to spare).
+    # Attack/release are deliberately SLOW (evaluate every few seconds,
+    # one step, long cooldown, hysteresis via the corridor): actuation is
+    # a full cfg re-stream between captures (~1 s blind), so this hunts
+    # session-scale scene changes, not transients. A hard LIMITER rides
+    # on UART frame-skips -- actual link saturation steps immediately and
+    # bigger. All corridor numbers are BENCH-TUNABLE PLACEHOLDERS (what a
+    # real bay's idle density looks like is a rung-3 measurement); the
+    # control loop's mechanics are what the sim verifies.
+    CFAR_PPF_LO = 1.0        # points/frame: below -> scene starved
+    CFAR_PPF_HI = 8.0        # points/frame: above -> scene flooded
+    CFAR_STEP_DB = 1.5       # one adjustment step
+    CFAR_LIMITER_DB = 3.0    # immediate step on UART saturation
+    CFAR_AUTO_MIN_DB = -6.0  # never more sensitive than baseline-6
+    CFAR_AUTO_MAX_DB = 12.0  # never deafer than baseline+12
+    CFAR_EVAL_S = 4.0        # sidechain window
+    CFAR_COOLDOWN_S = 10.0   # min time between adjustments
+    CFAR_SKIP_LIMIT = 5      # frame-skips per window that mean saturation
+
     def __init__(self, cli_port: str, data_port: str, cfg_path: str,
                  on_geometry: Callable[[dict], None],
                  archive_dir: Optional[str] = "captures",
-                 session: Optional[SessionConfig] = None):
+                 session: Optional[SessionConfig] = None,
+                 auto_cfar: bool = True):
         self.cli = serial.Serial(cli_port, 115200, timeout=1)
         self.data = serial.Serial(data_port, 921600, timeout=0.05)
         self.cfg_path = cfg_path
@@ -134,6 +163,17 @@ class IWR6843Source:
         # /sensorStart, the cfg files carry those lines themselves).
         self._pending_lock = threading.Lock()
         self._pending_session: Optional[tuple] = None
+        # Auto-CFAR compressor state (audit M-9; see the class-constant
+        # block for the design). _cfar_auto_db is the compressor's current
+        # gain-reduction/makeup term, applied by _apply_session on top of
+        # the session's static offset.
+        self.auto_cfar = auto_cfar
+        self._cfar_auto_db = 0.0
+        self._sc_frames = 0            # sidechain: idle frames seen
+        self._sc_points = 0            # sidechain: idle points seen
+        self._sc_skips = 0             # UART frame-skips this window
+        self._sc_t0 = None             # window start (host clock)
+        self._cfar_t_last = -1e9       # last adjustment time
 
     @staticmethod
     def _parse_frame_period(cfg_path: str) -> float:
@@ -226,9 +266,15 @@ class IWR6843Source:
         # (The dB semantics are stable across mmWave SDK 3.x; only re-check if
         # the flashed SDK is a different major line -- see golf.cfg's note on
         # per-version arg formats.)
+        # The auto-CFAR compressor's term (audit M-9) adds on top of the
+        # session's static offset; its own clamps (CFAR_AUTO_MIN/MAX_DB)
+        # bound the swing and this [0,100] clamp is the absolute rail.
         if key == "cfarCfg" and len(tok) >= 9:
             base = float(tok[8])
-            nudged = min(100.0, max(0.0, base + self.session.cfar_threshold_offset_db))
+            nudged = min(100.0, max(0.0,
+                                    base
+                                    + self.session.cfar_threshold_offset_db
+                                    + self._cfar_auto_db))
             tok[8] = f"{nudged:g}"
             return " ".join(tok)
         return line
@@ -239,7 +285,15 @@ class IWR6843Source:
         """Queue a session switch (thread-safe; callable from the SocketIO
         thread). run() applies it between captures via _apply_pending()."""
         with self._pending_lock:
-            self._pending_session = (session, cfg_path)
+            self._pending_session = (session, cfg_path, True)
+
+    def _request_cfar_retune(self) -> None:
+        """Queue a cfg re-stream that keeps the current session but carries
+        a changed _cfar_auto_db (the compressor's actuation path -- same
+        safe-point machinery as a mode switch, without the auto reset)."""
+        with self._pending_lock:
+            if self._pending_session is None:
+                self._pending_session = (self.session, self.cfg_path, False)
 
     def _apply_pending(self) -> bool:
         """Apply a queued session switch, if any. Returns True if applied.
@@ -248,7 +302,11 @@ class IWR6843Source:
             pending, self._pending_session = self._pending_session, None
         if pending is None:
             return False
-        session, cfg_path = pending
+        session, cfg_path, reset_auto = pending
+        if reset_auto:
+            # A mode switch is a new venue/scene: the compressor starts
+            # over from the session's own baseline.
+            self._cfar_auto_db = 0.0
         self.session = session
         self.cfg_path = cfg_path
         self.range_gate = session.range_gate
@@ -264,12 +322,62 @@ class IWR6843Source:
         self._buf.clear()
         self._pre_roll.clear()
         self._last_frame_num = None
+        # Fresh sidechain window under the new threshold/profile: the old
+        # window measured a different detector.
+        self._sc_frames = self._sc_points = self._sc_skips = 0
+        self._sc_t0 = None
         # The cfg files open with sensorStop + flushCfg and close with
         # sensorStart -- streaming the file IS the full live-reconfigure
         # sequence (same flow the TI Demo Visualizer uses).
         self.configure()
-        print(f"[iwr6843] session switched: {session.summary()}")
+        print(f"[iwr6843] session switched: {session.summary()}"
+              + (f" (auto-CFAR {self._cfar_auto_db:+.1f} dB retained)"
+                 if self._cfar_auto_db else ""))
         return True
+
+    # ---- automatic CFAR threshold (compressor, audit M-9) -----------------
+
+    def _auto_cfar_tick(self, frame) -> None:
+        """Sidechain accumulation + periodic gain decision. Called from
+        run() for ARMED idle frames only -- capture windows and post-shot
+        cooldowns never feed the sidechain, so a flurry of real shots can
+        never compress the detector against itself."""
+        if not self.auto_cfar:
+            return
+        if self._sc_t0 is None:
+            self._sc_t0 = frame.t
+        self._sc_frames += 1
+        self._sc_points += frame.points.shape[0]
+        if frame.t - self._sc_t0 < self.CFAR_EVAL_S:
+            return
+        ppf = self._sc_points / max(1, self._sc_frames)
+        skips = self._sc_skips
+        self._sc_frames = self._sc_points = self._sc_skips = 0
+        self._sc_t0 = frame.t
+        step = 0.0
+        # Hard limiter first: real UART saturation outranks the corridor.
+        if skips > self.CFAR_SKIP_LIMIT:
+            step = self.CFAR_LIMITER_DB
+            why = f"{skips} UART frame-skips/window (saturation)"
+        elif frame.t - self._cfar_t_last < self.CFAR_COOLDOWN_S:
+            return                     # release time not elapsed
+        elif ppf > self.CFAR_PPF_HI:
+            step = self.CFAR_STEP_DB
+            why = f"idle scene {ppf:.1f} pts/frame > {self.CFAR_PPF_HI:g}"
+        elif ppf < self.CFAR_PPF_LO:
+            step = -self.CFAR_STEP_DB
+            why = f"idle scene {ppf:.2f} pts/frame < {self.CFAR_PPF_LO:g}"
+        else:
+            return                     # inside the corridor: do nothing
+        new = min(self.CFAR_AUTO_MAX_DB,
+                  max(self.CFAR_AUTO_MIN_DB, self._cfar_auto_db + step))
+        if new == self._cfar_auto_db:
+            return                     # pinned at a rail: stop churning
+        self._cfar_auto_db = new
+        self._cfar_t_last = frame.t
+        print(f"[cfar] {why} -> threshold {'+' if step > 0 else ''}"
+              f"{step:g} dB (auto total {new:+.1f} dB)")
+        self._request_cfar_retune()
 
     # ---- TLV stream ------------------------------------------------------
 
@@ -315,6 +423,7 @@ class IWR6843Source:
                     self._last_frame_num + 1, self._last_frame_num):
                 print(f"[iwr6843] frame skip {self._last_frame_num}->{hdr[3]} "
                       f"(UART throughput?)")
+                self._sc_skips += 1    # auto-CFAR limiter sidechain (M-9)
             self._last_frame_num = hdr[3]
             frame = self._parse(raw, hdr)
             if frame is not None:
@@ -394,6 +503,10 @@ class IWR6843Source:
             if not armed:
                 armed = frame.t - last_shot > self.COOLDOWN
                 continue
+            # Armed idle: this frame feeds the auto-CFAR sidechain (and may
+            # queue a threshold retune, applied at the loop top like any
+            # pending reconfigure).
+            self._auto_cfar_tick(frame)
             if frame.points.size and \
                     np.any(np.abs(frame.points[:, 3]) > self.BALL_MIN_SPEED):
                 capture = list(self._pre_roll)
@@ -414,12 +527,21 @@ class IWR6843Source:
                     result = self.analyze(capture)
                 if result is not None:
                     result["capture_id"] = capture_id
+                    if self._cfar_auto_db:
+                        # Honesty tag: this record was measured under an
+                        # auto-adjusted detector threshold (validation
+                        # grouping needs to know).
+                        result["cfar_auto_db"] = round(self._cfar_auto_db, 1)
                     self.on_geometry(result)
                 elif capture_id:
                     what = "swing" if self.session.speed_training else "shot"
                     print(f"[iwr6843] trigger with no {what} -> archived "
                           f"{capture_id} for replay/tuning")
                 armed, last_shot = False, frame.t
+                # A trigger flushes the sidechain window: the pre-trigger
+                # tail and the cooldown aren't representative idle.
+                self._sc_frames = self._sc_points = self._sc_skips = 0
+                self._sc_t0 = None
 
     # ---- capture archive: every trigger becomes replayable data ----------
 

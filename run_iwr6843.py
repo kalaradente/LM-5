@@ -184,7 +184,8 @@ class IWR6843Monitor:
 
     def __init__(self, cli_port: str, data_port: str, cfg_path: str,
                  audio_device=None, gspro: Optional[GSProClient] = None,
-                 session: Optional[SessionConfig] = None):
+                 session: Optional[SessionConfig] = None,
+                 auto_cfar: bool = True):
         # Param names fixed in audit E-3: they used to read (geom_port,
         # data_port) while main() passed (cli_port, geom_port) -- the
         # positional wiring was correct but any keyword caller following
@@ -198,7 +199,8 @@ class IWR6843Monitor:
                                 session=self.session)
         self.source = IWR6843Source(cli_port, data_port, cfg_path,
                                      on_geometry=self.fuser.on_geometry,
-                                     session=self.session)
+                                     session=self.session,
+                                     auto_cfar=auto_cfar)
         self._thread: Optional[threading.Thread] = None
         self.gspro = gspro
 
@@ -348,6 +350,13 @@ def main() -> None:
                               "server/UI stream as shots, rendered as club-speed "
                               "cards. All three modes (indoor/outdoor/speed) are "
                               "also live-switchable from the web UI's mode picker.")
+    parser.add_argument("--no-auto-cfar", action="store_true",
+                         help="disable the automatic CFAR threshold (the "
+                              "'compressor': raises the chip's detection "
+                              "threshold when the idle scene floods the UART, "
+                              "lowers it when the scene is starved). Auto "
+                              "adjustments are always printed and stamped on "
+                              "shot records as cfar_auto_db.")
     parser.add_argument("--ballistics", action="store_true",
                          help="use the RK4 drag+Magnus physics engine for carry")
     parser.add_argument("--host", default="0.0.0.0")
@@ -443,7 +452,8 @@ def main() -> None:
 
     monitor = IWR6843Monitor(args.cli_port, args.geom_port, args.cfg,
                               audio_device=audio_device, gspro=gspro,
-                              session=session)
+                              session=session,
+                              auto_cfar=not args.no_auto_cfar)
     monitor.set_club(club)
     ofserver.monitor = monitor
     monitor.start(shot_callback=ofserver.on_shot_detected)

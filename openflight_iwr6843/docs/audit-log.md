@@ -128,6 +128,44 @@ It did not pass, twice, and the gauntlet earned its keep:
   (tee_range_m attributed to the HIT ball 20/20), out-of-band
   placements 4 ft/8 ft (0 misses, 0 phantoms, ≤2.5 mph).
 
+### M-9 — automatic CFAR threshold ("the compressor", same day)
+
+Johnny's brief: "can we apply an automatic cfar threshold? almost like
+what a compressor would do on vocals — bring the lows up and the highs
+down." Built exactly on that model, automating the V-6 escape hatch
+(which was a manual knob) and giving the M-7 teed-ball lock more
+sensitivity when the scene has headroom:
+
+- **Sidechain**: idle-scene detection density (points/frame), measured
+  ONLY while armed — capture windows and post-shot cooldowns are flushed,
+  so shots are never compressed against (they're the vocals). M-4's
+  empty-frame fix matters here: truly quiet scenes still tick the clock.
+- **Curve**: corridor 1–8 pts/frame (BENCH-TUNABLE PLACEHOLDERS — real
+  idle density is a rung-3 measurement). Flooded → thresholdScale up
+  1.5 dB/step ("highs down"); starved → down 1.5 dB ("lows up"). Slow
+  attack/release: 4 s windows, 10 s cooldown, clamp −6..+12 dB around
+  the session baseline, no churn when pinned at a rail.
+- **Limiter**: UART frame-skips (real link saturation, the V-6 fear)
+  step +3 dB immediately, cooldown notwithstanding.
+- **Actuation**: the mode-switch machinery's safe-point cfg re-stream
+  (`_request_cfar_retune`); a queued mode switch outranks a retune, and
+  a mode switch RESETS the auto term (new venue, new scene).
+- **Honesty**: every adjustment prints with its reason; shot/swing
+  records carry `cfar_auto_db` when nonzero so validation can group by
+  detector state. `--no-auto-cfar` disables the whole loop.
+
+Verified closed-loop against a RESPONSIVE fake chip (idle density a
+function of the threshold actually written to the fake CLI port — the
+loop must converge, not ratchet): flood 20 pts/frame → three +1.5 dB
+steps → corridor → quiet; a real driver capture mid-session published
+at 163.4 mph with the correct stamp; a skip burst fired the limiter
++3 dB through the cooldown; a mode switch reset to 0; a starved scene
+descended to the −6 rail and stopped. Wire-level cfarCfg values tracked
+every step. (The test's first run also re-proved the parser's resync
+path: a malformed empty-frame in the FAKE's serializer desynced the
+stream and the parser recovered exactly as designed, skip-counting all
+the while — harness bug, product behaving.)
+
 **Final measured envelopes across 5–7 ft (20 seeds × 4 placements),
 post-M-8: real-shot misses 3/320 — all ONE seed** (driver seed 16, a
 merge-eats-everything draw whose tangled birth has fast prefix rows, so
