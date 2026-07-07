@@ -59,7 +59,7 @@ index 4630ae0..b9ac19e 100644
      @property
      def ball_speed_ms(self) -> float:
 diff --git a/src/openflight/server.py b/src/openflight/server.py
-index 89d88c8..948497c 100644
+index 89d88c8..5701555 100644
 --- a/src/openflight/server.py
 +++ b/src/openflight/server.py
 @@ -867,6 +867,9 @@ def shot_to_dict(shot: Shot) -> dict:
@@ -72,7 +72,7 @@ index 89d88c8..948497c 100644
      }
  
  
-@@ -1785,6 +1788,51 @@ def _apply_calculated_spin(shot: Shot) -> bool:
+@@ -1785,6 +1788,54 @@ def _apply_calculated_spin(shot: Shot) -> bool:
      return True
  
  
@@ -102,7 +102,10 @@ index 89d88c8..948497c 100644
 +            step = (len(pts) - 1) / (_TRACER_MAX_POINTS - 1)
 +            pts = [pts[round(i * step)] for i in range(_TRACER_MAX_POINTS)]
 +        shot.trajectory = {
-+            "points": [[round(p.x, 1), round(p.y, 1), round(p.z, 1)] for p in pts],
++            # 2 decimals: at the tracer's near-field scale (~13 px/yd),
++            # 0.1 yd quantization reads as visible lateral jitter on a
++            # near-straight trace; 0.01 yd is sub-pixel.
++            "points": [[round(p.x, 2), round(p.y, 2), round(p.z, 2)] for p in pts],
 +            "apex_yards": round(traj.apex_yards, 1),
 +            "carry_yards": round(traj.carry_yards, 1),
 +            "lateral_yards": round(traj.lateral_yards, 1),
@@ -124,7 +127,7 @@ index 89d88c8..948497c 100644
  def on_shot_detected(shot: Shot):
      """Callback when a shot is detected - emit to all clients."""
      global ball_detected, ball_detection_confidence  # pylint: disable=global-statement
-@@ -2207,6 +2255,11 @@ def on_shot_detected(shot: Shot):
+@@ -2207,6 +2258,11 @@ def on_shot_detected(shot: Shot):
              exc=e,
          )
  
@@ -136,7 +139,7 @@ index 89d88c8..948497c 100644
      # Emit shot with launch angle data included
      try:
          shot_data = shot_to_dict(shot)
-@@ -2406,10 +2459,14 @@ class MockLaunchMonitor:
+@@ -2406,10 +2462,14 @@ class MockLaunchMonitor:
      # TrackMan averages for amateur golfers: (avg_ball_speed, std_dev, smash_factor)
      _CLUB_BALL_SPEEDS = {
          ClubType.DRIVER: (143, 12, 1.45),
@@ -151,7 +154,7 @@ index 89d88c8..948497c 100644
          ClubType.HYBRID_5: (118, 9, 1.37),
          ClubType.HYBRID_7: (112, 8, 1.35),
          ClubType.HYBRID_9: (106, 8, 1.33),
-@@ -2431,10 +2488,14 @@ class MockLaunchMonitor:
+@@ -2431,10 +2491,14 @@ class MockLaunchMonitor:
      # Spin rates (avg_rpm, std_dev) — drivers: low spin, wedges: high spin
      _CLUB_SPIN = {
          ClubType.DRIVER: (2700, 400),
@@ -166,7 +169,7 @@ index 89d88c8..948497c 100644
          ClubType.HYBRID_5: (4200, 500),
          ClubType.HYBRID_7: (4600, 500),
          ClubType.HYBRID_9: (5000, 500),
-@@ -2456,10 +2517,14 @@ class MockLaunchMonitor:
+@@ -2456,10 +2520,14 @@ class MockLaunchMonitor:
      # Launch angles in degrees (avg, std_dev) — drivers: low, wedges: high
      _CLUB_LAUNCH = {
          ClubType.DRIVER: (11.0, 2.0),
@@ -181,7 +184,7 @@ index 89d88c8..948497c 100644
          ClubType.HYBRID_5: (15.0, 2.0),
          ClubType.HYBRID_7: (16.5, 2.0),
          ClubType.HYBRID_9: (18.0, 2.5),
-@@ -2484,6 +2549,33 @@ class MockLaunchMonitor:
+@@ -2484,6 +2552,33 @@ class MockLaunchMonitor:
          self._running = False
          self._shot_callback = None
          self._current_club = ClubType.DRIVER
@@ -215,7 +218,7 @@ index 89d88c8..948497c 100644
  
      def connect(self):
          """Connect to mock radar (no-op)."""
-@@ -2536,6 +2628,23 @@ class MockLaunchMonitor:
+@@ -2536,6 +2631,23 @@ class MockLaunchMonitor:
  
          avg_speed, std_dev, smash = self._CLUB_BALL_SPEEDS.get(self._current_club, (120, 15, 1.35))
  
@@ -7359,10 +7362,10 @@ index 7d347ff..63ea834 100644
  
 diff --git a/ui/src/utils/tracerProjection.ts b/ui/src/utils/tracerProjection.ts
 new file mode 100644
-index 0000000..a431c23
+index 0000000..d76090e
 --- /dev/null
 +++ b/ui/src/utils/tracerProjection.ts
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,82 @@
 +/* Stylized behind-the-golfer projection for the ball tracer.
 +   World frame: x downrange, y lateral (+right), z up — all yards.
 +
@@ -7408,23 +7411,40 @@ index 0000000..a431c23
 +  };
 +}
 +
-+/** Smooth SVG path through the projected flight samples (Catmull-Rom
-+ * converted to cubic Béziers) — a curve, not 48 jointed line segments. */
++/** Smooth SVG path through the projected flight samples: CENTRIPETAL
++ * Catmull-Rom converted to cubic Béziers. The sim samples uniformly in
++ * time, so chord lengths are uneven (long off the face, tight at the
++ * apex) — uniform Catmull-Rom wiggles and overshoots at those spacing
++ * transitions; the centripetal parameterization (α = 0.5) doesn't. */
 +export function pathFrom(points: [number, number, number][]): string {
 +  const pts = points.map(([x, y, z]) => project(x, y, z));
 +  if (pts.length === 0) return '';
-+  if (pts.length === 1) return `M ${pts[0].u.toFixed(1)} ${pts[0].v.toFixed(1)}`;
-+  let d = `M ${pts[0].u.toFixed(1)} ${pts[0].v.toFixed(1)}`;
++  if (pts.length === 1) return `M ${pts[0].u.toFixed(2)} ${pts[0].v.toFixed(2)}`;
++
++  const chord = (a: { u: number; v: number }, b: { u: number; v: number }) =>
++    Math.sqrt(Math.hypot(b.u - a.u, b.v - a.v)); // |Δ|^0.5 — centripetal
++
++  let d = `M ${pts[0].u.toFixed(2)} ${pts[0].v.toFixed(2)}`;
 +  for (let i = 0; i < pts.length - 1; i++) {
 +    const p0 = pts[Math.max(0, i - 1)];
 +    const p1 = pts[i];
 +    const p2 = pts[i + 1];
 +    const p3 = pts[Math.min(pts.length - 1, i + 2)];
-+    const c1u = p1.u + (p2.u - p0.u) / 6;
-+    const c1v = p1.v + (p2.v - p0.v) / 6;
-+    const c2u = p2.u - (p3.u - p1.u) / 6;
-+    const c2v = p2.v - (p3.v - p1.v) / 6;
-+    d += ` C ${c1u.toFixed(1)} ${c1v.toFixed(1)}, ${c2u.toFixed(1)} ${c2v.toFixed(1)}, ${p2.u.toFixed(1)} ${p2.v.toFixed(1)}`;
++
++    const d1 = Math.max(chord(p0, p1), 1e-4);
++    const d2 = Math.max(chord(p1, p2), 1e-4);
++    const d3 = Math.max(chord(p2, p3), 1e-4);
++
++    // Standard centripetal CR → Bézier control points
++    const d1sq = d1 * d1;
++    const d2sq = d2 * d2;
++    const d3sq = d3 * d3;
++    const c1u = (d1sq * p2.u - d2sq * p0.u + (2 * d1sq + 3 * d1 * d2 + d2sq) * p1.u) / (3 * d1 * (d1 + d2));
++    const c1v = (d1sq * p2.v - d2sq * p0.v + (2 * d1sq + 3 * d1 * d2 + d2sq) * p1.v) / (3 * d1 * (d1 + d2));
++    const c2u = (d3sq * p1.u - d2sq * p3.u + (2 * d3sq + 3 * d3 * d2 + d2sq) * p2.u) / (3 * d3 * (d3 + d2));
++    const c2v = (d3sq * p1.v - d2sq * p3.v + (2 * d3sq + 3 * d3 * d2 + d2sq) * p2.v) / (3 * d3 * (d3 + d2));
++
++    d += ` C ${c1u.toFixed(2)} ${c1v.toFixed(2)}, ${c2u.toFixed(2)} ${c2v.toFixed(2)}, ${p2.u.toFixed(2)} ${p2.v.toFixed(2)}`;
 +  }
 +  return d;
 +}
