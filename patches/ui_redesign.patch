@@ -5261,7 +5261,7 @@ index df7c5ce..affc018 100644
 -  font-size: clamp(0.75rem, 6cqw, 1.5rem);
  }
 diff --git a/ui/src/components/ShotDisplay.tsx b/ui/src/components/ShotDisplay.tsx
-index cd645e3..57e30c2 100644
+index cd645e3..9afa986 100644
 --- a/ui/src/components/ShotDisplay.tsx
 +++ b/ui/src/components/ShotDisplay.tsx
 @@ -1,7 +1,17 @@
@@ -5290,17 +5290,16 @@ index cd645e3..57e30c2 100644
 +const RATING_GLYPH = { low: '▾', avg: '●', high: '▴' } as const;
 +const RATING_WORD = { low: 'LOW', avg: 'AVG', high: 'HIGH' } as const;
 +
-+/** "▴ HIGH · TOUR 7,097" — rating vs the tour average for the shot's club. */
-+export function TourRatingTag({ comparison, unit }: { comparison: TourComparison; unit?: string }) {
++/** "▴ HIGH · TOUR 7,097 rpm" — rating vs the tour average for the shot's
++ * club. `refText` is the pre-formatted tour value in the card's own
++ * display units so the reference always matches what the card shows. */
++export function TourRatingTag({ comparison, refText }: { comparison: TourComparison; refText: string }) {
 +  return (
 +    <span className={`metric-card__rating metric-card__rating--${comparison.rating}`}>
 +      <span className="metric-card__rating-word">
 +        {RATING_GLYPH[comparison.rating]} {RATING_WORD[comparison.rating]}
 +      </span>
-+      <span className="metric-card__rating-ref">
-+        TOUR {comparison.tourValue.toLocaleString('en-US')}
-+        {unit ?? ''}
-+      </span>
++      <span className="metric-card__rating-ref">TOUR {refText}</span>
 +    </span>
 +  );
 +}
@@ -5313,7 +5312,7 @@ index cd645e3..57e30c2 100644
    variant = 'default',
 -  confidence,
 +  rating,
-+  ratingUnit,
++  ratingRef,
  }: {
    value: string | number;
    unit?: string;
@@ -5323,7 +5322,8 @@ index cd645e3..57e30c2 100644
 -  confidence?: 'high' | 'medium' | 'low' | null;
 +  /** Tour-average comparison for this stat (null/undefined = no reference). */
 +  rating?: TourComparison | null;
-+  ratingUnit?: string;
++  /** Formatted tour reference shown in the tag (display units). */
++  ratingRef?: string;
  }) {
    return (
      <div className={`metric-card metric-card--${variant}`}>
@@ -5341,7 +5341,7 @@ index cd645e3..57e30c2 100644
 -          <span className="metric-card__confidence-label">{confidence}</span>
 -        </div>
 -      )}
-+      {rating && <TourRatingTag comparison={rating} unit={ratingUnit} />}
++      {rating && <TourRatingTag comparison={rating} refText={ratingRef ?? String(rating.tourValue)} />}
      </div>
    );
  }
@@ -5381,23 +5381,65 @@ index cd645e3..57e30c2 100644
            </div>
            <p className="shot-display__waiting-text">Ready for your shot</p>
            <p className="shot-display__waiting-hint">Position ball in front of radar</p>
-@@ -89,6 +101,10 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
- 
+@@ -90,6 +102,28 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
    const hasSpin = shot.spin_rpm !== null;
    const hasLaunchAngle = shot.launch_angle_vertical !== null;
-+  // Rate launch + spin against the tour average for the club this shot was
-+  // actually hit with (shot.club, not the picker's current selection).
-+  const launchRating = hasLaunchAngle ? rateTourStat(shot.club, 'launch', shot.launch_angle_vertical) : null;
-+  const spinRating = hasSpin ? rateTourStat(shot.club, 'spin', shot.spin_rpm) : null;
  
++  // Rate every stat the tour dataset also carries, against the tour
++  // average for the club this shot was actually hit with (shot.club, not
++  // the picker's current selection). Each stat uses its own band.
++  const rate = (stat: Parameters<typeof rateTourStat>[1], value: number | null) =>
++    rateTourStat(shot.club, stat, value);
++  const ballSpeedRating = rate('ball_speed', shot.ball_speed_mph);
++  const carryRating = rate('carry', displayCarry);
++  const clubSpeedRating = rate('club_speed', shot.club_speed_mph);
++  const smashRating = rate('smash', shot.smash_factor);
++  const launchRating = hasLaunchAngle ? rate('launch', shot.launch_angle_vertical) : null;
++  const spinRating = hasSpin ? rate('spin', shot.spin_rpm) : null;
++  const aoaRating = rate('aoa', shot.club_angle_deg);
++  const peakRating = shot.trajectory ? rate('peak_ft', shot.trajectory.apex_yards * 3) : null;
++
++  // Tour references rendered in the card's own display units.
++  const speedRef = (c: TourComparison | null) =>
++    c ? `${formatSpeed(c.tourValue, unitSystem, 0)} ${getSpeedUnit(unitSystem)}` : undefined;
++
++  // Angle radars only exist on the hardware path; in mock the values are
++  // generated. Say which — never claim "radar" for synthetic numbers.
++  const angleSourceTag = shot.mode === 'mock' ? 'mock' : 'radar';
++
    // Every metric — ball speed included — is now a uniform box in one
    // reflowing, drag-reorderable grid (no more special gauge column).
-@@ -123,7 +139,17 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+   const items: GridItem[] = [
+@@ -101,6 +135,8 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+           unit={getSpeedUnit(unitSystem)}
+           label="Ball Speed"
+           variant="primary"
++          rating={ballSpeedRating}
++          ratingRef={speedRef(ballSpeedRating)}
+         />
+       ),
+     },
+@@ -113,6 +149,12 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+           label="Est. Carry"
+           subtext={carrySubtext}
+           variant="primary"
++          rating={carryRating}
++          ratingRef={
++            carryRating
++              ? `${formatDistance(carryRating.tourValue, unitSystem, 0)} ${getDistanceUnit(unitSystem)}`
++              : undefined
++          }
+         />
+       ),
+     },
+@@ -123,8 +165,22 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
            value={shot.club_speed_mph ? formatSpeed(shot.club_speed_mph, unitSystem, 1) : '—'}
            unit={shot.club_speed_mph ? getSpeedUnit(unitSystem) : undefined}
            label="Club Speed"
 -          subtext={shot.smash_factor ? `${shot.smash_factor.toFixed(2)} smash` : undefined}
-+          variant="secondary"
+           variant="secondary"
++          rating={clubSpeedRating}
++          ratingRef={speedRef(clubSpeedRating)}
 +        />
 +      ),
 +    },
@@ -5408,16 +5450,19 @@ index cd645e3..57e30c2 100644
 +          value={shot.smash_factor ? shot.smash_factor.toFixed(2) : '—'}
 +          label="Smash Factor"
 +          subtext={shot.smash_factor ? 'ball ÷ club speed' : undefined}
-           variant="secondary"
++          variant="secondary"
++          rating={smashRating}
++          ratingRef={smashRating ? smashRating.tourValue.toFixed(2) : undefined}
          />
        ),
-@@ -137,12 +163,29 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+     },
+@@ -137,43 +193,78 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
            label="V. Launch"
            subtext={hasLaunchAngle ? (shot.angle_source ?? undefined) : undefined}
            variant="secondary"
 -          confidence={hasLaunchAngle ? getLaunchAngleQuality(shot.launch_angle_confidence) : null}
 +          rating={launchRating}
-+          ratingUnit="°"
++          ratingRef={launchRating ? `${launchRating.tourValue}°` : undefined}
          />
        ),
      },
@@ -5435,6 +5480,8 @@ index cd645e3..57e30c2 100644
 +          label="Peak Height"
 +          subtext="simulated"
 +          variant="secondary"
++          rating={peakRating}
++          ratingRef={peakRating ? `${Math.round(peakRating.tourValue)} ft` : undefined}
 +        />
 +      ),
 +    });
@@ -5442,7 +5489,18 @@ index cd645e3..57e30c2 100644
    if (shot.club_angle_deg !== null) {
      items.push({
        id: 'club_aoa',
-@@ -152,11 +195,14 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+       content: (
+-        <MetricCard value={shot.club_angle_deg.toFixed(1)} unit="°" label="Club AoA" subtext="radar" variant="secondary" />
++        <MetricCard
++          value={shot.club_angle_deg.toFixed(1)}
++          unit="°"
++          label="Club AoA"
++          subtext={angleSourceTag}
++          variant="secondary"
++          rating={aoaRating}
++          ratingRef={aoaRating ? `${aoaRating.tourValue}°` : undefined}
++        />
+       ),
      });
    }
    if (shot.club_path_deg !== null) {
@@ -5457,8 +5515,11 @@ index cd645e3..57e30c2 100644
 +          value={(displayedPath >= 0 ? '+' : '') + displayedPath.toFixed(1)}
            unit="°"
            label="Club Path"
-           subtext="radar"
-@@ -166,14 +212,19 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+-          subtext="radar"
++          subtext={angleSourceTag}
+           variant="secondary"
+         />
+       ),
      });
    }
    if (shot.spin_axis_deg !== null) {
@@ -5480,7 +5541,7 @@ index cd645e3..57e30c2 100644
            variant="secondary"
          />
        ),
-@@ -189,7 +240,6 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+@@ -189,7 +280,6 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
            label="H. Launch"
            subtext={shot.angle_source ?? undefined}
            variant="secondary"
@@ -5488,12 +5549,13 @@ index cd645e3..57e30c2 100644
          />
        ),
      });
-@@ -203,7 +253,7 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+@@ -203,7 +293,8 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
          label="Spin Rate"
          subtext={hasSpin && shot.spin_source ? (shot.spin_source === 'calculated' ? 'estimated' : 'radar') : undefined}
          variant="spin"
 -        confidence={hasSpin ? shot.spin_quality : null}
 +        rating={spinRating}
++        ratingRef={spinRating ? `${formatSpinRpm(spinRating.tourValue)} rpm` : undefined}
        />
      ),
    });
@@ -6695,124 +6757,226 @@ index 3f6f3c3..e601e97 100644
  
 diff --git a/ui/src/data/tourAverages.test.ts b/ui/src/data/tourAverages.test.ts
 new file mode 100644
-index 0000000..6f87d8d
+index 0000000..4da5eea
 --- /dev/null
 +++ b/ui/src/data/tourAverages.test.ts
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,96 @@
 +import { describe, expect, it } from 'vitest';
 +import { rateTourStat, TOUR_AVERAGES } from './tourAverages';
 +
-+describe('rateTourStat', () => {
-+  it('rates within ±30% of the tour average as avg', () => {
++describe('rateTourStat — per-stat bands', () => {
++  it('spin uses ±30% of the tour value', () => {
 +    // Driver spin tour avg 2686: band is 1880.2 .. 3491.8
 +    expect(rateTourStat('driver', 'spin', 2686)?.rating).toBe('avg');
 +    expect(rateTourStat('driver', 'spin', 1881)?.rating).toBe('avg');
 +    expect(rateTourStat('driver', 'spin', 3491)?.rating).toBe('avg');
-+  });
-+
-+  it('rates outside the band as low/high', () => {
 +    expect(rateTourStat('driver', 'spin', 1800)?.rating).toBe('low');
 +    expect(rateTourStat('driver', 'spin', 3600)?.rating).toBe('high');
-+    // 7-iron launch tour avg 16.3: band 11.41 .. 21.19
-+    expect(rateTourStat('7-iron', 'launch', 10.0)?.rating).toBe('low');
-+    expect(rateTourStat('7-iron', 'launch', 22.5)?.rating).toBe('high');
++  });
++
++  it('ball speed uses ±10 mph (the "tour 170 → under 160 low, over 180 high" rule)', () => {
++    // Driver ball speed tour avg 167: band is 157 .. 177
++    expect(rateTourStat('driver', 'ball_speed', 156)?.rating).toBe('low');
++    expect(rateTourStat('driver', 'ball_speed', 160)?.rating).toBe('avg');
++    expect(rateTourStat('driver', 'ball_speed', 175)?.rating).toBe('avg');
++    expect(rateTourStat('driver', 'ball_speed', 178)?.rating).toBe('high');
++  });
++
++  it('club speed uses ±10 mph', () => {
++    // Driver club speed tour avg 113
++    expect(rateTourStat('driver', 'club_speed', 102)?.rating).toBe('low');
++    expect(rateTourStat('driver', 'club_speed', 110)?.rating).toBe('avg');
++    expect(rateTourStat('driver', 'club_speed', 124)?.rating).toBe('high');
++  });
++
++  it('smash factor uses ±0.05', () => {
++    // Driver smash tour avg 1.48
++    expect(rateTourStat('driver', 'smash', 1.42)?.rating).toBe('low');
++    expect(rateTourStat('driver', 'smash', 1.45)?.rating).toBe('avg');
++    expect(rateTourStat('driver', 'smash', 1.54)?.rating).toBe('high');
++  });
++
++  it('carry uses ±10%', () => {
++    // Driver carry tour avg 275: band is 247.5 .. 302.5
++    expect(rateTourStat('driver', 'carry', 240)?.rating).toBe('low');
++    expect(rateTourStat('driver', 'carry', 260)?.rating).toBe('avg');
++    expect(rateTourStat('driver', 'carry', 310)?.rating).toBe('high');
++  });
++
++  it('launch angle uses ±3°', () => {
++    // 7-iron launch tour avg 16.3: band is 13.3 .. 19.3
++    expect(rateTourStat('7-iron', 'launch', 12.9)?.rating).toBe('low');
++    expect(rateTourStat('7-iron', 'launch', 16.0)?.rating).toBe('avg');
++    expect(rateTourStat('7-iron', 'launch', 19.6)?.rating).toBe('high');
++  });
++
++  it('attack angle uses ±2° on the signed value', () => {
++    // Driver AoA tour avg -1.3: band is -3.3 .. 0.7
++    expect(rateTourStat('driver', 'aoa', -4.0)?.rating).toBe('low');
++    expect(rateTourStat('driver', 'aoa', -1.0)?.rating).toBe('avg');
++    expect(rateTourStat('driver', 'aoa', 1.0)?.rating).toBe('high');
++  });
++
++  it('peak height compares in FEET with a ±15 ft band', () => {
++    // Driver apex tour avg 32 yd = 96 ft: band is 81 .. 111
++    expect(rateTourStat('driver', 'peak_ft', 75)?.rating).toBe('low');
++    expect(rateTourStat('driver', 'peak_ft', 90)?.rating).toBe('avg');
++    expect(rateTourStat('driver', 'peak_ft', 115)?.rating).toBe('high');
++    expect(rateTourStat('driver', 'peak_ft', 90)?.tourValue).toBe(96);
 +  });
 +
 +  it('returns the tour reference it compared against', () => {
 +    expect(rateTourStat('7-iron', 'spin', 7000)?.tourValue).toBe(7097);
 +    expect(rateTourStat('7-iron', 'launch', 16)?.tourValue).toBe(16.3);
++    expect(rateTourStat('7-iron', 'ball_speed', 118)?.tourValue).toBe(120);
++    expect(rateTourStat('7-iron', 'carry', 170)?.tourValue).toBe(172);
 +  });
 +
 +  it('returns null for clubs without a tour reference', () => {
 +    expect(rateTourStat('sw', 'spin', 10000)).toBeNull();
 +    expect(rateTourStat('2-iron', 'launch', 12)).toBeNull();
-+    expect(rateTourStat('not-a-club', 'spin', 2500)).toBeNull();
++    expect(rateTourStat('mini-driver', 'ball_speed', 160)).toBeNull();
++    expect(rateTourStat('not-a-club', 'carry', 250)).toBeNull();
 +  });
 +
 +  it('returns null for missing values', () => {
 +    expect(rateTourStat('driver', 'spin', null)).toBeNull();
-+    expect(rateTourStat('driver', 'launch', NaN)).toBeNull();
++    expect(rateTourStat('driver', 'ball_speed', NaN)).toBeNull();
 +  });
 +
-+  it('covers every club it claims to cover', () => {
++  it('rates the exact tour value as avg for every stat and club', () => {
 +    for (const [club, ref] of Object.entries(TOUR_AVERAGES)) {
 +      expect(rateTourStat(club, 'launch', ref.launch_deg)?.rating).toBe('avg');
 +      expect(rateTourStat(club, 'spin', ref.spin_rpm)?.rating).toBe('avg');
++      expect(rateTourStat(club, 'ball_speed', ref.ball_speed_mph)?.rating).toBe('avg');
++      expect(rateTourStat(club, 'club_speed', ref.club_speed_mph)?.rating).toBe('avg');
++      expect(rateTourStat(club, 'smash', ref.smash_factor)?.rating).toBe('avg');
++      expect(rateTourStat(club, 'carry', ref.carry_yards)?.rating).toBe('avg');
++      expect(rateTourStat(club, 'aoa', ref.attack_angle_deg)?.rating).toBe('avg');
++      expect(rateTourStat(club, 'peak_ft', ref.max_height_yards * 3)?.rating).toBe('avg');
 +    }
 +  });
 +});
 diff --git a/ui/src/data/tourAverages.ts b/ui/src/data/tourAverages.ts
 new file mode 100644
-index 0000000..7940d1e
+index 0000000..fd14f51
 --- /dev/null
 +++ b/ui/src/data/tourAverages.ts
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,116 @@
 +// PGA Tour launch-monitor averages per club, from TrackMan's published
 +// tour dataset. Source of truth on this machine:
 +//   ~/Desktop/datasheets/pgatourstats/pga_tour_averages_trackman.csv
 +// (see DATA_NOTES.md there for provenance). Values below transcribed from
 +// that CSV — update here if the CSV is ever refreshed.
 +//
-+// Used to rate a shot's launch and spin against the tour number for the
-+// club the shot was hit with: within ±30% reads as tour-average, outside
-+// the band reads HIGH or LOW.
++// Every stat the CSV and the pipeline both track gets rated against the
++// tour number for the club the shot was hit with. Bands are PER STAT —
++// blanket percentages make no sense across units (±30% of ball speed
++// would be a ±50 mph window): speeds use absolute mph, carry a
++// percentage, angles absolute degrees, and so on. Outside the band reads
++// LOW or HIGH; inside reads AVG.
 +//
 +// Clubs without a row in the dataset (2i, 7W, 5H/7H/9H, GW/SW/LW) get no
 +// rating rather than an invented reference — honest-instrumentation rule.
 +
 +export interface TourReference {
++  /** Clubhead speed, mph */
++  club_speed_mph: number;
++  /** Attack angle, degrees (negative = hitting down) */
++  attack_angle_deg: number;
++  /** Ball speed, mph */
++  ball_speed_mph: number;
++  /** Smash factor (ball ÷ club speed) */
++  smash_factor: number;
 +  /** Vertical launch angle, degrees */
 +  launch_deg: number;
 +  /** Total spin, rpm */
 +  spin_rpm: number;
++  /** Apex height, yards (displayed in feet everywhere) */
++  max_height_yards: number;
++  /** Carry, yards */
++  carry_yards: number;
 +}
 +
 +export const TOUR_AVERAGES: Record<string, TourReference> = {
-+  driver: { launch_deg: 10.9, spin_rpm: 2686 },
-+  '3-wood': { launch_deg: 9.2, spin_rpm: 3655 },
-+  '5-wood': { launch_deg: 9.4, spin_rpm: 4350 },
++  driver: { club_speed_mph: 113, attack_angle_deg: -1.3, ball_speed_mph: 167, smash_factor: 1.48, launch_deg: 10.9, spin_rpm: 2686, max_height_yards: 32, carry_yards: 275 },
++  '3-wood': { club_speed_mph: 107, attack_angle_deg: -2.9, ball_speed_mph: 158, smash_factor: 1.48, launch_deg: 9.2, spin_rpm: 3655, max_height_yards: 30, carry_yards: 243 },
++  '5-wood': { club_speed_mph: 103, attack_angle_deg: -3.3, ball_speed_mph: 152, smash_factor: 1.47, launch_deg: 9.4, spin_rpm: 4350, max_height_yards: 31, carry_yards: 230 },
 +  // TrackMan publishes one hybrid row ("Hybrid 15-18deg"). Loft-wise that's
 +  // a 2H; a 3H (~19°) sits within a degree of the range, so both use it.
 +  // 4H+ lofts are outside the row — no reference, no rating.
-+  '2-hybrid': { launch_deg: 10.2, spin_rpm: 4437 },
-+  '3-hybrid': { launch_deg: 10.2, spin_rpm: 4437 },
-+  '3-iron': { launch_deg: 10.4, spin_rpm: 4630 },
-+  '4-iron': { launch_deg: 11.0, spin_rpm: 4836 },
-+  '5-iron': { launch_deg: 12.1, spin_rpm: 5361 },
-+  '6-iron': { launch_deg: 14.1, spin_rpm: 6231 },
-+  '7-iron': { launch_deg: 16.3, spin_rpm: 7097 },
-+  '8-iron': { launch_deg: 18.1, spin_rpm: 7998 },
-+  '9-iron': { launch_deg: 20.4, spin_rpm: 8647 },
-+  pw: { launch_deg: 24.2, spin_rpm: 9304 },
++  '2-hybrid': { club_speed_mph: 100, attack_angle_deg: -3.5, ball_speed_mph: 146, smash_factor: 1.46, launch_deg: 10.2, spin_rpm: 4437, max_height_yards: 29, carry_yards: 225 },
++  '3-hybrid': { club_speed_mph: 100, attack_angle_deg: -3.5, ball_speed_mph: 146, smash_factor: 1.46, launch_deg: 10.2, spin_rpm: 4437, max_height_yards: 29, carry_yards: 225 },
++  '3-iron': { club_speed_mph: 98, attack_angle_deg: -3.1, ball_speed_mph: 142, smash_factor: 1.45, launch_deg: 10.4, spin_rpm: 4630, max_height_yards: 27, carry_yards: 212 },
++  '4-iron': { club_speed_mph: 96, attack_angle_deg: -3.4, ball_speed_mph: 137, smash_factor: 1.43, launch_deg: 11.0, spin_rpm: 4836, max_height_yards: 28, carry_yards: 203 },
++  '5-iron': { club_speed_mph: 94, attack_angle_deg: -3.7, ball_speed_mph: 132, smash_factor: 1.41, launch_deg: 12.1, spin_rpm: 5361, max_height_yards: 31, carry_yards: 194 },
++  '6-iron': { club_speed_mph: 92, attack_angle_deg: -4.1, ball_speed_mph: 127, smash_factor: 1.38, launch_deg: 14.1, spin_rpm: 6231, max_height_yards: 30, carry_yards: 183 },
++  '7-iron': { club_speed_mph: 90, attack_angle_deg: -4.3, ball_speed_mph: 120, smash_factor: 1.33, launch_deg: 16.3, spin_rpm: 7097, max_height_yards: 32, carry_yards: 172 },
++  '8-iron': { club_speed_mph: 87, attack_angle_deg: -4.5, ball_speed_mph: 115, smash_factor: 1.32, launch_deg: 18.1, spin_rpm: 7998, max_height_yards: 31, carry_yards: 160 },
++  '9-iron': { club_speed_mph: 85, attack_angle_deg: -4.7, ball_speed_mph: 109, smash_factor: 1.28, launch_deg: 20.4, spin_rpm: 8647, max_height_yards: 30, carry_yards: 148 },
++  pw: { club_speed_mph: 83, attack_angle_deg: -5.0, ball_speed_mph: 102, smash_factor: 1.23, launch_deg: 24.2, spin_rpm: 9304, max_height_yards: 29, carry_yards: 136 },
 +};
 +
 +export type TourRating = 'low' | 'avg' | 'high';
 +
++export type TourStat =
++  | 'ball_speed'
++  | 'club_speed'
++  | 'smash'
++  | 'carry'
++  | 'launch'
++  | 'spin'
++  | 'aoa'
++  | 'peak_ft';
++
 +export interface TourComparison {
 +  rating: TourRating;
-+  /** The tour-average value the shot was compared against. */
++  /** The tour-average value the shot was compared against, in the stat's
++   * native unit (mph, yds, deg, rpm — peak_ft is FEET). */
 +  tourValue: number;
 +}
 +
-+const BAND = 0.3;
++interface StatSpec {
++  /** Pull the reference value (in the stat's native unit) from a row. */
++  ref: (r: TourReference) => number;
++  /** Half-width of the AVG band: absolute in the stat's unit, or a
++   * fraction of the tour value. */
++  band: { abs: number } | { pct: number };
++}
++
++// Per-stat common-sense bands. Example (Johnny's spec): tour ball speed
++// 170 → under 160 reads LOW, over 180 reads HIGH.
++const STAT_SPECS: Record<TourStat, StatSpec> = {
++  ball_speed: { ref: (r) => r.ball_speed_mph, band: { abs: 10 } },
++  club_speed: { ref: (r) => r.club_speed_mph, band: { abs: 10 } },
++  smash: { ref: (r) => r.smash_factor, band: { abs: 0.05 } },
++  carry: { ref: (r) => r.carry_yards, band: { pct: 0.1 } },
++  launch: { ref: (r) => r.launch_deg, band: { abs: 3 } },
++  spin: { ref: (r) => r.spin_rpm, band: { pct: 0.3 } },
++  aoa: { ref: (r) => r.attack_angle_deg, band: { abs: 2 } },
++  peak_ft: { ref: (r) => r.max_height_yards * 3, band: { abs: 15 } },
++};
 +
 +/**
-+ * Rate a measured stat against the tour average for the club.
-+ * Returns null when the club has no tour reference (or the value is
-+ * unusable): the UI shows nothing rather than a made-up comparison.
++ * Rate a measured stat against the tour average for the club, using that
++ * stat's own band. Returns null when the club has no tour reference (or
++ * the value is unusable): the UI shows nothing rather than a made-up
++ * comparison. `value` must be in the stat's native unit (peak_ft: feet).
 + */
 +export function rateTourStat(
 +  club: string,
-+  stat: 'launch' | 'spin',
++  stat: TourStat,
 +  value: number | null,
 +): TourComparison | null {
 +  if (value === null || !Number.isFinite(value)) return null;
-+  const ref = TOUR_AVERAGES[club];
-+  if (!ref) return null;
++  const row = TOUR_AVERAGES[club];
++  if (!row) return null;
 +
-+  const tourValue = stat === 'launch' ? ref.launch_deg : ref.spin_rpm;
-+  if (value < tourValue * (1 - BAND)) return { rating: 'low', tourValue };
-+  if (value > tourValue * (1 + BAND)) return { rating: 'high', tourValue };
++  const spec = STAT_SPECS[stat];
++  const tourValue = spec.ref(row);
++  const half = 'abs' in spec.band ? spec.band.abs : Math.abs(tourValue) * spec.band.pct;
++  if (value < tourValue - half) return { rating: 'low', tourValue };
++  if (value > tourValue + half) return { rating: 'high', tourValue };
 +  return { rating: 'avg', tourValue };
 +}
 diff --git a/ui/src/index.css b/ui/src/index.css
