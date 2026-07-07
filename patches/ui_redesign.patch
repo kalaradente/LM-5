@@ -3194,6 +3194,19 @@ index 1249d0d..9e772f7 100644
 +  border-color: var(--amber-deep);
 +  color: var(--on-amber);
  }
+diff --git a/ui/src/components/ClubPicker.tsx b/ui/src/components/ClubPicker.tsx
+index 2d17177..cb24d2e 100644
+--- a/ui/src/components/ClubPicker.tsx
++++ b/ui/src/components/ClubPicker.tsx
+@@ -38,7 +38,7 @@ export function ClubPicker({ selectedClub, onClubChange }: ClubPickerProps) {
+           <div className="club-picker__overlay" onClick={() => setIsOpen(false)} />
+           <div className="club-picker__dropdown">
+             {Object.entries(CLUBS_BY_TYPE).map(([type, clubs]) => (
+-              <div className="club-picker__section">
++              <div className="club-picker__section" key={type}>
+                 <span className="club-picker__section-title">{type}</span>
+                 <div className="club-picker__grid">
+                   {clubs.map((club) => (
 diff --git a/ui/src/components/ClubSelectScreen.css b/ui/src/components/ClubSelectScreen.css
 index efcaa16..3bfca12 100644
 --- a/ui/src/components/ClubSelectScreen.css
