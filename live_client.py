@@ -54,4 +54,10 @@ class LiveClient:
                 "club": typed.club.value,
             },
         )
+        # emit() only queues the packet on the transport's write loop; if the
+        # process exits immediately the shot is silently dropped (observed
+        # 2026-07-07: "[live] shot sent" printed, server never received it).
+        # Give the background writer a beat, then close the socket cleanly.
+        self.sio.sleep(1.0)
+        self.sio.disconnect()
         print("[live] shot sent to server")
