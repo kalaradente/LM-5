@@ -59,7 +59,7 @@ index 4630ae0..b9ac19e 100644
      @property
      def ball_speed_ms(self) -> float:
 diff --git a/src/openflight/server.py b/src/openflight/server.py
-index 89d88c8..44b8ed6 100644
+index 89d88c8..948497c 100644
 --- a/src/openflight/server.py
 +++ b/src/openflight/server.py
 @@ -867,6 +867,9 @@ def shot_to_dict(shot: Shot) -> dict:
@@ -72,7 +72,7 @@ index 89d88c8..44b8ed6 100644
      }
  
  
-@@ -1785,6 +1788,49 @@ def _apply_calculated_spin(shot: Shot) -> bool:
+@@ -1785,6 +1788,51 @@ def _apply_calculated_spin(shot: Shot) -> bool:
      return True
  
  
@@ -106,6 +106,8 @@ index 89d88c8..44b8ed6 100644
 +            "apex_yards": round(traj.apex_yards, 1),
 +            "carry_yards": round(traj.carry_yards, 1),
 +            "lateral_yards": round(traj.lateral_yards, 1),
++            # Real hang time: the UI paces the trace draw-in to this.
++            "flight_time_s": round(traj.flight_time_s, 2),
 +        }
 +        # Mock shots are excluded from the ballistic-carry block below (its
 +        # `mode != "mock"` gate), so without this the carry card would show
@@ -122,7 +124,7 @@ index 89d88c8..44b8ed6 100644
  def on_shot_detected(shot: Shot):
      """Callback when a shot is detected - emit to all clients."""
      global ball_detected, ball_detection_confidence  # pylint: disable=global-statement
-@@ -2207,6 +2253,11 @@ def on_shot_detected(shot: Shot):
+@@ -2207,6 +2255,11 @@ def on_shot_detected(shot: Shot):
              exc=e,
          )
  
@@ -134,7 +136,7 @@ index 89d88c8..44b8ed6 100644
      # Emit shot with launch angle data included
      try:
          shot_data = shot_to_dict(shot)
-@@ -2406,10 +2457,14 @@ class MockLaunchMonitor:
+@@ -2406,10 +2459,14 @@ class MockLaunchMonitor:
      # TrackMan averages for amateur golfers: (avg_ball_speed, std_dev, smash_factor)
      _CLUB_BALL_SPEEDS = {
          ClubType.DRIVER: (143, 12, 1.45),
@@ -149,7 +151,7 @@ index 89d88c8..44b8ed6 100644
          ClubType.HYBRID_5: (118, 9, 1.37),
          ClubType.HYBRID_7: (112, 8, 1.35),
          ClubType.HYBRID_9: (106, 8, 1.33),
-@@ -2431,10 +2486,14 @@ class MockLaunchMonitor:
+@@ -2431,10 +2488,14 @@ class MockLaunchMonitor:
      # Spin rates (avg_rpm, std_dev) — drivers: low spin, wedges: high spin
      _CLUB_SPIN = {
          ClubType.DRIVER: (2700, 400),
@@ -164,7 +166,7 @@ index 89d88c8..44b8ed6 100644
          ClubType.HYBRID_5: (4200, 500),
          ClubType.HYBRID_7: (4600, 500),
          ClubType.HYBRID_9: (5000, 500),
-@@ -2456,10 +2515,14 @@ class MockLaunchMonitor:
+@@ -2456,10 +2517,14 @@ class MockLaunchMonitor:
      # Launch angles in degrees (avg, std_dev) — drivers: low, wedges: high
      _CLUB_LAUNCH = {
          ClubType.DRIVER: (11.0, 2.0),
@@ -179,7 +181,7 @@ index 89d88c8..44b8ed6 100644
          ClubType.HYBRID_5: (15.0, 2.0),
          ClubType.HYBRID_7: (16.5, 2.0),
          ClubType.HYBRID_9: (18.0, 2.5),
-@@ -2484,6 +2547,33 @@ class MockLaunchMonitor:
+@@ -2484,6 +2549,33 @@ class MockLaunchMonitor:
          self._running = False
          self._shot_callback = None
          self._current_club = ClubType.DRIVER
@@ -213,7 +215,7 @@ index 89d88c8..44b8ed6 100644
  
      def connect(self):
          """Connect to mock radar (no-op)."""
-@@ -2536,6 +2626,23 @@ class MockLaunchMonitor:
+@@ -2536,6 +2628,23 @@ class MockLaunchMonitor:
  
          avg_speed, std_dev, smash = self._CLUB_BALL_SPEEDS.get(self._current_club, (120, 15, 1.35))
  
@@ -1284,10 +1286,10 @@ index c002c6e..880c731 100644
    );
 diff --git a/ui/src/components/BallTracer.css b/ui/src/components/BallTracer.css
 new file mode 100644
-index 0000000..1c98abf
+index 0000000..98fdaa8
 --- /dev/null
 +++ b/ui/src/components/BallTracer.css
-@@ -0,0 +1,328 @@
+@@ -0,0 +1,359 @@
 +/* Ball Tracer — virtual range panel in the Live view.
 +   Same instrument vocabulary as the metric modules: bordered surface,
 +   tracked label header, mono readouts. The range itself is drawn in
@@ -1531,7 +1533,7 @@ index 0000000..1c98abf
 +  stroke: var(--accent-text);
 +  stroke-width: 2;
 +  opacity: 0;
-+  animation: tracer-ring 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.85s;
++  animation: tracer-ring 0.7s cubic-bezier(0.22, 1, 0.36, 1) var(--trace-delay, 0.85s);
 +}
 +
 +@keyframes tracer-ring {
@@ -1551,20 +1553,25 @@ index 0000000..1c98abf
 +  fill: none;
 +  stroke: var(--accent-border);
 +  stroke-width: 1.5;
++  stroke-linecap: round;
++  stroke-linejoin: round;
 +  opacity: 0.35;
 +}
 +
-+/* Latest flight: the amber trace draws in as the shot feedback.
-+   pathLength=1 normalizes the dash math; the global reduced-motion rule
-+   collapses the animation to an instant full trace. */
++/* Latest flight: the amber trace draws in over the shot's REAL hang time
++   (--trace-duration is set from the sim's flight_time_s). The easing is a
++   gentle ease-out — the ball covers ground fastest off the face and slows
++   through the flight. pathLength=1 normalizes the dash math; the global
++   reduced-motion rule collapses the whole thing to an instant trace. */
 +.ball-tracer__trace {
 +  fill: none;
 +  stroke: var(--accent-text);
 +  stroke-width: 2.5;
 +  stroke-linecap: round;
++  stroke-linejoin: round;
 +  stroke-dasharray: 1;
 +  stroke-dashoffset: 0;
-+  animation: tracer-draw 0.9s cubic-bezier(0.22, 1, 0.36, 1);
++  animation: tracer-draw var(--trace-duration, 0.9s) cubic-bezier(0.3, 0.05, 0.65, 1);
 +}
 +
 +/* Soft light under the live trace so it reads over the range dressing */
@@ -1573,10 +1580,36 @@ index 0000000..1c98abf
 +  stroke: var(--accent-text);
 +  stroke-width: 6;
 +  stroke-linecap: round;
++  stroke-linejoin: round;
 +  opacity: 0.35;
 +  stroke-dasharray: 1;
 +  stroke-dashoffset: 0;
-+  animation: tracer-draw 0.9s cubic-bezier(0.22, 1, 0.36, 1);
++  animation: tracer-draw var(--trace-duration, 0.9s) cubic-bezier(0.3, 0.05, 0.65, 1);
++}
++
++/* Markers arrive with the ball, not before: apex label as it crests,
++   carry label + dot as it lands. Reduced motion collapses the delays. */
++.ball-tracer__marker,
++.ball-tracer__landing {
++  animation: tracer-appear 0.25s cubic-bezier(0.22, 1, 0.36, 1) both;
++}
++
++.ball-tracer__marker {
++  animation-delay: var(--trace-apex-delay, 0.4s);
++}
++
++.ball-tracer__marker--carry,
++.ball-tracer__landing {
++  animation-delay: var(--trace-delay, 0.85s);
++}
++
++@keyframes tracer-appear {
++  from {
++    opacity: 0;
++  }
++  to {
++    opacity: 1;
++  }
 +}
 +
 +@keyframes tracer-draw {
@@ -1774,10 +1807,10 @@ index 0000000..66173b7
 +});
 diff --git a/ui/src/components/BallTracer.tsx b/ui/src/components/BallTracer.tsx
 new file mode 100644
-index 0000000..bb351a7
+index 0000000..fc7a557
 --- /dev/null
 +++ b/ui/src/components/BallTracer.tsx
-@@ -0,0 +1,359 @@
+@@ -0,0 +1,370 @@
 +import { useEffect, useRef, useState } from 'react';
 +import type { Shot } from '../types/shot';
 +import type { CameraStatus } from '../stores/useCameraStore';
@@ -1791,7 +1824,7 @@ index 0000000..bb351a7
 +  VIEW_H,
 +  VIEW_W,
 +  V_HORIZON,
-+  polylineFrom,
++  pathFrom,
 +  project,
 +} from '../utils/tracerProjection';
 +import './BallTracer.css';
@@ -2066,26 +2099,37 @@ index 0000000..bb351a7
 +
 +            {/* Prior traces, faded */}
 +            {priorTraces.map((traj, i) => (
-+              <polyline
++              <path
 +                key={i}
 +                className="ball-tracer__trace-prior"
-+                points={polylineFrom(traj.points)}
++                d={pathFrom(traj.points)}
 +              />
 +            ))}
 +
 +            {/* Latest trace — soft glow under a bright draw-in stroke,
-+                keyed to the shot so it replays */}
++                keyed to the shot so it replays. The draw is paced to the
++                shot's REAL hang time (flight_time_s from the RK4 sim), and
++                the landing ring fires when the ball would land. */}
 +            {latestTraj && (
-+              <g key={latestVisible!.timestamp}>
-+                <polyline
++              <g
++                key={latestVisible!.timestamp}
++                style={
++                  {
++                    '--trace-duration': `${latestTraj.flight_time_s ?? 0.9}s`,
++                    '--trace-delay': `${(latestTraj.flight_time_s ?? 0.9) * 0.97}s`,
++                    '--trace-apex-delay': `${(latestTraj.flight_time_s ?? 0.9) * 0.45}s`,
++                  } as React.CSSProperties
++                }
++              >
++                <path
 +                  className="ball-tracer__trace-glow"
-+                  points={polylineFrom(latestTraj.points)}
++                  d={pathFrom(latestTraj.points)}
 +                  pathLength={1}
 +                  filter="url(#tracer-glow)"
 +                />
-+                <polyline
++                <path
 +                  className="ball-tracer__trace"
-+                  points={polylineFrom(latestTraj.points)}
++                  d={pathFrom(latestTraj.points)}
 +                  pathLength={1}
 +                />
 +                {landingPoint && (
@@ -5214,7 +5258,7 @@ index df7c5ce..affc018 100644
 -  font-size: clamp(0.75rem, 6cqw, 1.5rem);
  }
 diff --git a/ui/src/components/ShotDisplay.tsx b/ui/src/components/ShotDisplay.tsx
-index cd645e3..a9babf1 100644
+index cd645e3..57e30c2 100644
 --- a/ui/src/components/ShotDisplay.tsx
 +++ b/ui/src/components/ShotDisplay.tsx
 @@ -1,7 +1,17 @@
@@ -5345,7 +5389,26 @@ index cd645e3..a9babf1 100644
  
    // Every metric — ball speed included — is now a uniform box in one
    // reflowing, drag-reorderable grid (no more special gauge column).
-@@ -137,12 +153,29 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+@@ -123,7 +139,17 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+           value={shot.club_speed_mph ? formatSpeed(shot.club_speed_mph, unitSystem, 1) : '—'}
+           unit={shot.club_speed_mph ? getSpeedUnit(unitSystem) : undefined}
+           label="Club Speed"
+-          subtext={shot.smash_factor ? `${shot.smash_factor.toFixed(2)} smash` : undefined}
++          variant="secondary"
++        />
++      ),
++    },
++    {
++      id: 'smash_factor',
++      content: (
++        <MetricCard
++          value={shot.smash_factor ? shot.smash_factor.toFixed(2) : '—'}
++          label="Smash Factor"
++          subtext={shot.smash_factor ? 'ball ÷ club speed' : undefined}
+           variant="secondary"
+         />
+       ),
+@@ -137,12 +163,29 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
            label="V. Launch"
            subtext={hasLaunchAngle ? (shot.angle_source ?? undefined) : undefined}
            variant="secondary"
@@ -5376,7 +5439,7 @@ index cd645e3..a9babf1 100644
    if (shot.club_angle_deg !== null) {
      items.push({
        id: 'club_aoa',
-@@ -152,11 +185,14 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+@@ -152,11 +195,14 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
      });
    }
    if (shot.club_path_deg !== null) {
@@ -5392,7 +5455,7 @@ index cd645e3..a9babf1 100644
            unit="°"
            label="Club Path"
            subtext="radar"
-@@ -166,14 +202,19 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+@@ -166,14 +212,19 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
      });
    }
    if (shot.spin_axis_deg !== null) {
@@ -5414,7 +5477,7 @@ index cd645e3..a9babf1 100644
            variant="secondary"
          />
        ),
-@@ -189,7 +230,6 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+@@ -189,7 +240,6 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
            label="H. Launch"
            subtext={shot.angle_source ?? undefined}
            variant="secondary"
@@ -5422,7 +5485,7 @@ index cd645e3..a9babf1 100644
          />
        ),
      });
-@@ -203,7 +243,7 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+@@ -203,7 +253,7 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
          label="Spin Rate"
          subtext={hasSpin && shot.spin_source ? (shot.spin_source === 'calculated' ? 'estimated' : 'radar') : undefined}
          variant="spin"
@@ -7229,10 +7292,10 @@ index 0000000..4f3ba21
 +  },
 +}));
 diff --git a/ui/src/types/shot.ts b/ui/src/types/shot.ts
-index 7d347ff..25ebb5b 100644
+index 7d347ff..63ea834 100644
 --- a/ui/src/types/shot.ts
 +++ b/ui/src/types/shot.ts
-@@ -25,6 +25,16 @@ export interface Shot {
+@@ -25,6 +25,19 @@ export interface Shot {
    // (club_speed_mph is the only meaningful metric, ball_speed_mph is a
    // structural 0). Optional: older servers don't send it.
    mode?: string;
@@ -7245,11 +7308,14 @@ index 7d347ff..25ebb5b 100644
 +    apex_yards: number;
 +    carry_yards: number;
 +    lateral_yards: number;
++    /** Real hang time in seconds; the tracer paces its draw-in to this.
++     * Optional: older server payloads don't carry it. */
++    flight_time_s?: number;
 +  } | null;
  }
  
  export interface SessionStats {
-@@ -36,6 +46,10 @@ export interface SessionStats {
+@@ -36,6 +49,10 @@ export interface SessionStats {
    avg_club_speed: number | null;
    avg_smash_factor: number | null;
    avg_carry_est: number;
@@ -7260,7 +7326,7 @@ index 7d347ff..25ebb5b 100644
    // Rolling buffer mode spin stats
    avg_spin_rpm?: number | null;
    spin_detection_rate?: number;
-@@ -93,6 +107,8 @@ export function computeStats(shots: Shot[]): SessionStats {
+@@ -93,6 +110,8 @@ export function computeStats(shots: Shot[]): SessionStats {
        avg_club_speed: null,
        avg_smash_factor: null,
        avg_carry_est: 0,
@@ -7269,7 +7335,7 @@ index 7d347ff..25ebb5b 100644
      };
    }
  
-@@ -100,6 +116,12 @@ export function computeStats(shots: Shot[]): SessionStats {
+@@ -100,6 +119,12 @@ export function computeStats(shots: Shot[]): SessionStats {
    const clubSpeeds = shots.map((s) => s.club_speed_mph).filter((v): v is number => v !== null);
    const smashFactors = shots.map((s) => s.smash_factor).filter((v): v is number => v !== null);
    const carries = shots.map((s) => s.estimated_carry_yards);
@@ -7282,7 +7348,7 @@ index 7d347ff..25ebb5b 100644
  
    const mean = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
    const stdDev = (arr: number[]) => {
-@@ -117,6 +139,8 @@ export function computeStats(shots: Shot[]): SessionStats {
+@@ -117,6 +142,8 @@ export function computeStats(shots: Shot[]): SessionStats {
      avg_club_speed: clubSpeeds.length > 0 ? mean(clubSpeeds) : null,
      avg_smash_factor: smashFactors.length > 0 ? mean(smashFactors) : null,
      avg_carry_est: mean(carries),
@@ -7293,10 +7359,10 @@ index 7d347ff..25ebb5b 100644
  
 diff --git a/ui/src/utils/tracerProjection.ts b/ui/src/utils/tracerProjection.ts
 new file mode 100644
-index 0000000..cb9f4fc
+index 0000000..a431c23
 --- /dev/null
 +++ b/ui/src/utils/tracerProjection.ts
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,65 @@
 +/* Stylized behind-the-golfer projection for the ball tracer.
 +   World frame: x downrange, y lateral (+right), z up — all yards.
 +
@@ -7342,13 +7408,25 @@ index 0000000..cb9f4fc
 +  };
 +}
 +
-+export function polylineFrom(points: [number, number, number][]): string {
-+  return points
-+    .map(([x, y, z]) => {
-+      const p = project(x, y, z);
-+      return `${p.u.toFixed(1)},${p.v.toFixed(1)}`;
-+    })
-+    .join(' ');
++/** Smooth SVG path through the projected flight samples (Catmull-Rom
++ * converted to cubic Béziers) — a curve, not 48 jointed line segments. */
++export function pathFrom(points: [number, number, number][]): string {
++  const pts = points.map(([x, y, z]) => project(x, y, z));
++  if (pts.length === 0) return '';
++  if (pts.length === 1) return `M ${pts[0].u.toFixed(1)} ${pts[0].v.toFixed(1)}`;
++  let d = `M ${pts[0].u.toFixed(1)} ${pts[0].v.toFixed(1)}`;
++  for (let i = 0; i < pts.length - 1; i++) {
++    const p0 = pts[Math.max(0, i - 1)];
++    const p1 = pts[i];
++    const p2 = pts[i + 1];
++    const p3 = pts[Math.min(pts.length - 1, i + 2)];
++    const c1u = p1.u + (p2.u - p0.u) / 6;
++    const c1v = p1.v + (p2.v - p0.v) / 6;
++    const c2u = p2.u - (p3.u - p1.u) / 6;
++    const c2v = p2.v - (p3.v - p1.v) / 6;
++    d += ` C ${c1u.toFixed(1)} ${c1v.toFixed(1)}, ${c2u.toFixed(1)} ${c2v.toFixed(1)}, ${p2.u.toFixed(1)} ${p2.v.toFixed(1)}`;
++  }
++  return d;
 +}
 diff --git a/ui/src/utils/units.ts b/ui/src/utils/units.ts
 index 2af0476..e5189cd 100644
