@@ -242,8 +242,11 @@ Running list of open items. Newest relevant item first per section.
       BENCH (rung 3): does a static teed ball clear CFAR against the mat
       at all? If not, everything still works -- locks just never form.
       If yes, tune teeball detectability + the 0.9-3.2 m tee zone against
-      reality; UI surfacing of tee_range_m ("ball detected at 6.2 ft")
-      is a nice follow-on once real lock rates are known.
+      reality. UI surfacing of tee_range_m: DONE 2026-07-08 (audit #9
+      follow-on) -- a "Tee Range" card (feet, matching the Peak Height
+      convention) renders whenever a shot carries a lock; hardware-only
+      by design (the mock never forms locks), pinned by
+      ShotDisplay.test.tsx + a shot_to_dict round-trip check.
 
 - [ ] **Auto-start OpenFlight on Pi boot**: run_iwr6843.py should come up
       by itself when the Pi powers on (walk up, swing, no SSH). Likely a
@@ -427,10 +430,25 @@ Running list of open items. Newest relevant item first per section.
       mandatory commands (V-2). Completeness now audited against the SDK
       UG's full mandatory list (the UG PDF is now on disk in
       `~/Desktop/datasheets/mmwave visualizer user guide/`).
-- [ ] Read OpenFlight's actual source/README once repo access happens, to
-      confirm (rather than infer) the real reason for the sound trigger
-      and rolling buffer, before posting anything publicly that
-      characterizes his design.
+- [x] Read OpenFlight's actual source/README to confirm (rather than
+      infer) the real reason for the sound trigger and rolling buffer —
+      **confirmed 2026-07-08 from the upstream docs themselves**
+      (`docs/rolling_buffer_spin_detection.md`, based on OmniPreSense
+      guidance Jan 2026; `docs/sound-trigger-wiring.md`): (1) the
+      OPS243-A's streaming mode emits processed speeds at ~56 Hz with no
+      raw I/Q, so SPIN is impossible there — rolling-buffer mode (G1)
+      exists to capture raw 4096-sample I/Q (~136 ms @ 30 ksps) for
+      overlapping-FFT post-processing that extracts spin from Doppler
+      micro-variations (50-60% success, their number); (2) the buffer
+      dump needs a trigger, and the SEN-14262 sound sensor wired to
+      HOST_INT gives ~10 µs latency vs ~5-6 ms for radar-speed
+      triggering, keeping impact centered in the short buffer; (3) the
+      persistent-mode requirement (`A!` + power cycle) works around an
+      OPS243-A firmware bug (per OmniPreSense) where the HOST_INT pin
+      mode switches when changing modes at runtime. Safe to characterize
+      publicly now. (Our IWR6843/K-MC1 design needs none of this: the
+      6843 streams point clouds continuously and self-triggers on
+      Doppler, and the K-MC1 channel records audio continuously.)
 - [x] git init the repo (AGPL-3.0-or-later, matching OpenFlight; `.gitignore`
       excludes `captures/` and `__pycache__/`) — done, see LICENSE.
 - [ ] Confirm mains frequency in `spin_decoder.MAINS_NOTCH_HZ` matches your

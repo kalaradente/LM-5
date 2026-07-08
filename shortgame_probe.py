@@ -30,9 +30,11 @@ The physics box the sweep operates inside (can't be tuned away):
   - The K-MC1 spin carrier band bottoms at 1223 Hz = 17 mph: below that
     there is NO measured spin at any gate (CW physics). Chips get
     club-typical fallback spin regardless of this probe's outcome.
-  - Launch angle at chip speeds reads ~10 deg low (documented, audit F-7
-    known limitations): club/ball interleave within position noise.
-    Chip-class angles stay informational; speed is the trustworthy read.
+  - Launch angle at chip speeds reads -3.6±3.8 deg (worst 13.6 low) under
+    full dirt — the F-7 separability floor as MEASURED after audit V-7
+    (the older "~10 deg low" figure was retracted in V-3b; it was a sign
+    bug, not physics). Chip-class angles stay informational; speed is the
+    trustworthy read.
 """
 
 from __future__ import annotations
@@ -145,8 +147,9 @@ READ THE TABLE HONESTLY (synthetic findings, 2026-07-07):
   needs a chip-regime classifier pass; quantify on real hardware with
   --live before trusting any of this.
 Hard physics regardless of gate: no measured spin below 17 mph (K-MC1
-carrier band), chip launch angles read ~10° low (informational only),
-Doppler bin ≈ 5.3 mph, no rollout model.""")
+carrier band), chip launch angles scatter low (−3.6±3.8°, informational
+only — see the audit-log V-7 residual table), Doppler bin ≈ 5.3 mph, no
+rollout model.""")
 
 
 def live_bench(gate_mps: float, minutes: float) -> None:
@@ -164,9 +167,13 @@ def live_bench(gate_mps: float, minutes: float) -> None:
             if "=" in line and not line.strip().startswith("#"):
                 k, v = line.split("=", 1)
                 env[k.strip()] = v.strip()
-    cli, data = env.get("IWR_CLI_PORT"), env.get("IWR_DATA_PORT")
+    # Same keys the wizard writes and run_iwr6843.py reads (audit T-8: this
+    # path originally read IWR_CLI_PORT/IWR_DATA_PORT, names nothing ever
+    # wrote -- the live mode would have refused to start even after a
+    # successful wizard run).
+    cli, data = env.get("CLI_PORT"), env.get("GEOM_PORT")
     if not (cli and data):
-        sys.exit("hardware.env missing IWR_CLI_PORT/IWR_DATA_PORT — run the "
+        sys.exit("hardware.env missing CLI_PORT/GEOM_PORT — run the "
                  "setup wizard first (this mode needs the real radar).")
 
     events = {"shots": 0}
@@ -184,11 +191,17 @@ def live_bench(gate_mps: float, minutes: float) -> None:
     print(f"Gate {gate_mps} m/s ({gate_mps * MPH_PER_MPS:.1f} mph), "
           f"{minutes} min. Phase 1: stand still (idle false-trigger count). "
           f"Phase 2: chip real balls and note your own count vs detections.")
-    src.start()
+    # run() is the blocking acquisition loop (there is no start(); audit
+    # T-8 -- the original call here was an AttributeError waiting for
+    # hardware day). Same daemon-thread pattern IWR6843Monitor uses.
+    import threading
+    t = threading.Thread(target=src.run, daemon=True)
+    t.start()
     try:
         time.sleep(minutes * 60)
     finally:
         src.stop()
+        t.join(timeout=5.0)
     print(f"Detections: {events['shots']}. Compare to reality; log the gate "
           f"and both counts in the audit log (bench rung).")
 

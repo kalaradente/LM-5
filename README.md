@@ -44,6 +44,11 @@ hardware discovery. Safe to re-run.
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 git clone https://github.com/jewbetcha/openflight.git openflight_upstream   # only shot_simulator.py --live / run_iwr6843.py need this
+# then check out the pinned commit the patches are verified against
+# (UPSTREAM_COMMIT in scripts/setup_wizard.sh) before applying patches/ --
+# upstream HEAD moves, and an unpinned tree once broke ui_redesign.patch
+# (audit #9, T-3)
+git -C openflight_upstream checkout "$(grep -m1 '^UPSTREAM_COMMIT=' scripts/setup_wizard.sh | cut -d'"' -f2)"
 ```
 
 ## Try it without hardware

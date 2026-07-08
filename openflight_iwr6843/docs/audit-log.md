@@ -6,13 +6,79 @@ framework): **physical input → trigger mechanism → processing → output →
 upstream**. Findings get IDs (`F-n` for the 2026-07-04 code audit, `D-n`
 for datasheet-driven findings, `V-n` for the 2026-07-05/06 Visualizer/SDK
 User Guide chip-config audit, `M-n` for the speed-training/mode surface,
-`U-n` for the web-UI redesign + flight-physics + tracer surface) and carry
+`U-n` for the web-UI redesign + flight-physics + tracer surface, `T-n`
+for the 2026-07-07/08 top-down full-system dirt audit) and carry
 forward between entries until closed — an audit isn't just what's newly
 broken, it's the standing state of everything found so far.
 
 Primary sources live at `~/Desktop/datasheets/` — see
 `datasheets-manifest.md` in this folder. PGA Tour ground-truth for the
 flight engine lives at `~/Desktop/datasheets/pgatourstats/`.
+
+---
+
+## Audit #9 — 2026-07-07/08 (T-series: top-down full-system dirt audit)
+
+Johnny's brief: "run a topdown audit now. with dirt. no stone left
+unturned. be nitpicky. check your work." Method: the five-stage walk over
+EVERY surface at once — geometry, spin/fusion, session/entry points,
+wizard + patch stack, upstream server/UI, docs — with priority on the
+never-audited stragglers (`shortgame_probe.py --live`, `live_client.py`,
+`validate.py`), numeric/filesystem dirt (NaN/Inf injection, corrupt
+archives/cfgs, dead streams), and cross-cutting drift after two heavy
+parallel sessions. Every finding below was REPRODUCED before it was
+claimed and its fix RE-VERIFIED by probe + full suites. The dirt battery
+is committed at `scripts/audit9_dirt_battery.py` (15 probe results, all
+PASS post-fix; exits nonzero on any FINDING) and is part of the HANDOFF
+§3 verification loop, alongside `scripts/check_patch_stack.sh` (the T-3
+early warning: the stack must apply at the pin; a HEAD failure means
+upstream drifted — rebase and bump the pin on your schedule, not on
+bring-up day).
+
+**The audit's centerpiece was found by Johnny's own process correction**:
+the bench for patch verification was being derived from LM-1's local
+upstream snapshot; he asked for a fresh GitHub clone instead, and the
+fresh clone immediately exposed T-3.
+
+| ID | Sev | Status | Finding |
+|---|---|---|---|
+| T-3 | **HIGH — FIXED** | **The wizard cloned UNPINNED upstream HEAD, upstream moved, and `ui_redesign.patch` no longer applied.** Upstream merged PR #139 (kld7 two-ray estimator; 4 commits, touching `server.py` and `App.css`) AFTER the PR-#141 tree all patch verification ran against — so a Pi bring-up on 2026-07-07 would have hit the patch-loop's warn-and-continue and silently shipped the STOCK UI. Worse, audits #7/#8's "patch re-applies on a virgin clone" evidence had silently run against the stale LOCAL snapshot, so it could never have caught drift. Fixes, each verified: (1) patch stack rebased onto real HEAD `c623fe5` (zero-conflict `git rebase --onto`; one SEMANTIC conflict caught by upstream's own new exhaustiveness test — their new per-club `_TOUR_LAUNCH_DEG` table didn't know our four added clubs; extended along THEIR tour-average convention, not our optimal-launch numbers); (2) `ui_redesign.patch` regenerated and proven **bit-identical** when applied from scratch in wizard order on pristine `c623fe5`; (3) the wizard now PINS `UPSTREAM_COMMIT` (shallow fetch-by-SHA, live-tested against GitHub, 59 MB vs 204 MB full history, full-clone fallback, pin-mismatch warning on existing checkouts); (4) README dev instructions extract the pin. Standing rule: bump the pin only deliberately, after re-running the stack + suites on the new commit. Bench rule (memory note `upstream-bench-from-github`): patch verification runs against a fresh GitHub clone inside LM-2, never a copy of LM-1's. Suite on the new base: **937 passed** (was 890 — upstream's new tests included), 45 UI, 6 e2e. |
+| T-5 | **MED — FIXED** | **Dead audio stream mid-session → ghost spin from the ring.** `AudioRing.window()` never checked that samples ARRIVED after the shot: if the K-MC1/ALSA stream dies after real shots painted the ring, a later radar trigger slices stale audio and `decode()` happily reads it (probe: a 30 s-stale ring decoded ok=True, 8244 rpm — and a prior shot's clean carrier would re-decode at full confidence, sailing over every `spin_conf_floor`). The window's tail is `t_center+post`, and the fuser runs ≥ capture_window (> post) after impact, so a live stream ALWAYS has `age ≥ post` — the guard returns silence below that, prints loudly, tags `last_clip["stale"]`, and the shot falls back to inferred spin honestly. |
+| T-8 | **MED — FIXED** | **`shortgame_probe.py --live` was broken twice over and could never have run on bench day**: it called `src.start()` — a method `IWR6843Source` does not have (AttributeError; `run()` is the blocking loop — now a daemon thread + `stop()` + join, the same pattern `IWR6843Monitor` uses) — and it read `IWR_CLI_PORT`/`IWR_DATA_PORT` from hardware.env, key names nothing ever wrote (wizard writes `CLI_PORT`/`GEOM_PORT`), so it exited "missing ports" even after a successful wizard run. The E-series lesson re-taught: an unpressed button rots; this one was born after audit #3's press. |
+| T-9 | **MED — FIXED** | **`validate.py` crashed on (and silently poisoned) real mixed-session logs.** `_col` keyed columns off row 0 and indexed later rows directly — but a real `shots.jsonl` mixes swings (no launch/side keys) with shots: KeyError crash, and BEFORE crashing it had scored a swing's structural 0.0 mph against truth (−95 mph "error" in the aggregates). Now: swing records are dropped up front with a note (a truth unit only logs ball flight), keys are unioned across rows, missing values score NaN. Verified on a synthetic mixed file. |
+| T-12 | **MED — FIXED** | **`simple-websocket` was missing from requirements.txt — the Pi UI would have silently run on long-polling.** Upstream pins `async_mode="threading"`; without simple-websocket, engineio advertises no upgrade (handshake `upgrades:[]`) and every client rides polling. Our bench only had websockets via leftover venv packages — exactly the class of accident a requirements audit exists to catch. Added `simple-websocket>=1.1.0` (which is what surfaces T-1, fixed together). |
+| T-1 | **MED — FIXED** | **Every websocket disconnect logged an 11-line ERROR traceback + phantom 500** (`AssertionError: write() before start_response`): engineio's `SimpleWebSocketWSGI.__call__` returns from a hijacked websocket without ever calling `start_response`, and werkzeug ≥3.1 asserts (latest engineio 4.13.3 + werkzeug 3.1.8; no fixed release exists — checked). On the Pi that's log spam on every page-nav/reconnect, violating the zero-noise rule. Fix in our patched `server.py` (rides `ui_redesign.patch`): a WSGI shim that, when a websocket request completes without start_response, raises `ConnectionAbortedError` — werkzeug's documented connection-dropped path, the same convention flask-sock uses. Verified: 3 raw ws connect/close cycles + a python-socketio client over websocket + a full headless-browser session — 0 tracebacks, 0 phantom 500s, transport fully functional. |
+| T-4 | LOW — FIXED | `_parse_frame_period` caught only `OSError` while its sibling `_parse_vmax_ext` caught `(OSError, ValueError)` — a numerically-corrupt `frameCfg` line crashed the constructor instead of falling back to 2 ms. Symmetric now. |
+| T-6 | LOW — FIXED | `decode()` crashed on sub-10-sample windows: E-2 hardened `_ridge`, but the later-added mains notch (`clean_iq`'s filtfilt, padlen 9) reintroduced a crash path UNDER it, and an empty window also crashed the bench path's `rfftfreq` indexing. Early-out below 64 samples (matching `_ridge`'s own no-carrier floor) covers both modes. |
+| T-7 | LOW — FIXED | **NaN passed both output boundaries un-railed**: `GSProClient.send_shot` emitted spec-invalid JSON (`{"Speed": NaN}` — a bare NaN literal), and `_log_shot` wrote `NaN` into shots.jsonl plus mangled numpy scalars (`np.bool_` → `0.0` via `default=float`). No in-pipeline NaN source exists (NaN/Inf dirt through `_parse`/`analyze()` stayed finite — see verified-good), so these are defense-in-depth rails: non-finite required fields → not sendable; non-finite optionals → 0/None; `_log_shot` sanitizes types and runs `allow_nan=False` as a tripwire. |
+| T-10 | LOW — FIXED | `shot_simulator.py` interactive mode died on any typo (`float("abc")` uncaught). Retry loop. |
+| T-13 | LOW — FIXED | **The "honest limits" doc carried a RETRACTED claim as live**: `hardware-physics-limits.md` stated "chip launch reads ~10° low, systematically (audit F-7)" — retracted in V-3b (sign bug, not physics; measured residual −3.6±3.8°, worst −13.6°). `shortgame_probe.py`'s docstring repeated it. Both corrected to the V-7 measured numbers. Same sweep: `datasheets-manifest.md` was missing `pgatourstats/` (the tour ground truth the physics + grading are built on — added); stale `.claude/launch.json` pointed at a dead scratchpad (replaced). |
+| T-11 | LOW — **FIXED same session** | Wizard internal inconsistency: avoids `mapfile` "for macOS bash 3.2" yet used `declare -A` (bash 4+) in the exactly-2-ports path. Replaced with two scalars + an `iface_of` helper (exactly two ports never needed a map); CLI = lower interface number, `?` falls toward GEOM — the old sort's behavior preserved, smoke-tested. |
+| T-2 | LOW — **CLOSED same session (Johnny: delete)** | `~/Desktop/LM-2_handoff.pdf` was a 2026-07-04 snapshot (15 commits old) stating since-REVERSED facts as truth — most dangerously the pre-D-1 ttyACM/XDS110 port story (debugging aimed at the wrong device class) plus "one patch" and "SessionConfig not wired". Deleted on Johnny's instruction. The stray `~/Desktop/OPENFLIGHT copy/` workspace was likewise verified empty of unique work (a clone of LM-1 at origin/main, 0 unpushed commits; wiring diagram tracked in LM-1 proper; `simulate_shot.py` and a hand-patched inner `server.py` both superseded by LM-2's committed `spin_capture_simulator.py` and `patches/simulate_custom_shot.patch`) and deleted. |
+
+**Verified good under dirt (no change needed):** NaN/Inf Doppler and
+position injection through `_parse` → `analyze()` (finite outputs, no
+crash, no phantom — the NaN-Doppler row survives into points but every
+consumer tolerates it); TLV frames carrying NaN/Inf floats (xyz-NaN rows
+die at the range gate); corrupt archives (`n_points` lying about the
+points array) replay to `analyze() → None`; the fuser digests
+minimal/None-heavy geometry dicts; `decode()` on all-NaN/all-Inf windows
+returns not-ok gracefully; `get_session_stats` is None-safe
+(`estimated_carry_yards` always returns float); GSPro never sees swings
+(re-confirmed at the adapter). Upstream/UI surface pressed live on the
+rebased bench: **the two 1:26 AM screenshot anomalies were mid-session
+states, not live bugs** — Club AoA grades correctly per club (driver
+−5.9 → LOW, −1.4 → AVG; clubs without a tour row are correctly chipless,
+e.g. 2-iron), and mock-mode source tags read "mock" on every angle tile;
+browser console 0 errors/0 warnings across load + club dialog + 12 shots;
+server log 0 tracebacks post-shim. Full suites on the pinned base:
+937 Python + 45 UI + 6 Playwright, patch stack bit-identical from scratch.
+Inherited upstream noise, not our surface: `test_kld7_radc_lib`'s
+mean-of-empty-slice RuntimeWarnings (upstream's own K-LD7 stack).
+
+**Standing rules added this audit:** the upstream pin (bump = deliberate
+act with full re-verification); patch verification only against a fresh
+GitHub clone; probes that catch real defects graduate into simulators.
 
 ---
 

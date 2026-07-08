@@ -175,12 +175,18 @@ def run_shot(typed: TypedShot) -> None:
 
 def prompt_float(label: str, default: Optional[float] = None) -> Optional[float]:
     suffix = f" [{default}]" if default is not None else ""
-    raw = input(f"{label}{suffix}: ").strip()
-    if not raw:
-        return default
-    if raw.lower() in ("q", "quit", "exit"):
-        raise SystemExit
-    return float(raw)
+    while True:
+        raw = input(f"{label}{suffix}: ").strip()
+        if not raw:
+            return default
+        if raw.lower() in ("q", "quit", "exit"):
+            raise SystemExit
+        try:
+            return float(raw)
+        except ValueError:
+            # A typo must not kill the whole interactive session (audit
+            # T-10: any non-numeric input used to crash the loop).
+            print(f"  '{raw}' isn't a number -- try again (or 'q' to quit)")
 
 
 def interactive_loop(club: ClubType, live) -> None:

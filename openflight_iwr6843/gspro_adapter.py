@@ -84,20 +84,38 @@ class GSProClient:
     def send_shot(self, shot: dict) -> Optional[dict]:
         """Map a fused Shot dict to GSPro JSON and transmit.
         Returns GSPro's response dict (code 200/201 = accepted)."""
+        import math
         required = ("ball_speed_mph", "launch_angle_deg", "side_angle_deg")
-        if any(shot.get(k) is None for k in required):
+        # Non-finite values are treated exactly like missing ones (audit
+        # T-7): json.dumps would happily emit a bare NaN literal, which is
+        # OUTSIDE the JSON spec -- whether GSPro's parser errors or nulls
+        # it is its business, but an out-of-spec payload from us is a bug
+        # regardless. No in-pipeline NaN source is known (the T-battery's
+        # NaN dirt stayed finite through analyze()); this is the boundary
+        # guard so that never has to stay true by luck.
+        if any(shot.get(k) is None
+               or not math.isfinite(float(shot[k])) for k in required):
             return None                       # not a sendable shot
 
+        def fin(v, default=0.0):
+            # optional fields get the same finiteness rail as required ones
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                return default
+            return f if math.isfinite(f) else default
+
         self.shot_number += 1
-        msg = self._base(ball=True, club=shot.get("club_speed_mph") is not None)
+        club_ok = fin(shot.get("club_speed_mph"), None) is not None
+        msg = self._base(ball=True, club=club_ok)
         msg["BallData"] = {
             "Speed": float(shot["ball_speed_mph"]),
             "VLA": float(shot["launch_angle_deg"]),
             "HLA": float(shot["side_angle_deg"]),
-            "TotalSpin": float(shot.get("spin_rpm") or 0.0),
-            "SpinAxis": float(shot.get("spin_axis_hint_deg") or 0.0),
+            "TotalSpin": fin(shot.get("spin_rpm")),
+            "SpinAxis": fin(shot.get("spin_axis_hint_deg")),
         }
-        if shot.get("club_speed_mph") is not None:
+        if club_ok:
             msg["ClubData"] = {"Speed": float(shot["club_speed_mph"])}
         return self._send(msg)
 

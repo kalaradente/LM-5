@@ -186,7 +186,10 @@ class IWR6843Source:
                     tok = line.split()
                     if tok and tok[0] == "frameCfg" and len(tok) >= 6:
                         return float(tok[5]) / 1000.0
-        except OSError:
+        except (OSError, ValueError):
+            # ValueError too (audit T-4): a numerically-corrupt frameCfg
+            # line crashed the constructor here while _parse_vmax_ext fell
+            # back -- same file, same failure, asymmetric behavior.
             pass
         return 0.002
 

@@ -1,7 +1,7 @@
 # LM-2 — Session Handoff / State of Affairs
 
-_Written 2026-07-04, last updated 2026-07-08 (after audit #8, the web-UI
-redesign + flight-physics session). Read this first, then
+_Written 2026-07-04, last updated 2026-07-08 (after audit #9, the
+top-down T-series dirt audit). Read this first, then
 `openflight_iwr6843/docs/audit-log.md` (the running audit record —
 REQUIRED reading before assuming anything about open issues), `TODO.md`,
 `openflight_iwr6843/docs/hardware-physics-limits.md` (the honest
@@ -44,23 +44,34 @@ until the parts arrive.
   Its committed state is the real LM-1.)
 
 `openflight_upstream/` (the OpenFlight clone) is **git-ignored** in both —
-it has its own git history. The setup wizard clones it, applies our
-patches (`patches/`, glob order: `session_mode` → `simulate_custom_shot` →
-`ui_redesign`), then `npm install && npm run build`s the UI (the server
-serves `ui/dist`; without the build the Pi serves a stale bundle). On a
-dev machine, symlink it for testing:
-`ln -sfn ~/Desktop/OPENFLIGHT/openflight_upstream openflight_upstream`
-(remove the symlink before committing). **Symlink trap:** other sessions
-create/remove that symlink — `readlink` before writing through it, or
-writes land in the frozen LM-1 snapshot.
+it has its own git history. The setup wizard clones it **at a PINNED
+commit** (`UPSTREAM_COMMIT` in `scripts/setup_wizard.sh` — audit #9, T-3:
+an unpinned clone broke `ui_redesign.patch` when upstream merged PR #139;
+bump the pin only deliberately, re-verifying the whole stack + suites on
+the new commit first), applies our patches (`patches/`, glob order:
+`session_mode` → `simulate_custom_shot` → `ui_redesign`), then
+`npm install && npm run build`s the UI (the server serves `ui/dist`;
+without the build the Pi serves a stale bundle). On a dev machine,
+**clone fresh from GitHub inside LM-2 and check out the pin** (Johnny's
+rule, audit #9):
+`git clone https://github.com/jewbetcha/openflight.git openflight_upstream`
+then `git -C openflight_upstream checkout <UPSTREAM_COMMIT>` — do NOT
+symlink or copy LM-1's local clone; its snapshot drifts from what the
+wizard actually fetches, and that exact drift hid T-3 from two audits.
+(The current dev checkout keeps the verified stack on its `old-stack`
+branch; `git diff 395b91b old-stack --binary` regenerates
+`ui_redesign.patch`.)
 
 ---
 
 ## 3. How to work in this repo
 
-- **venv**: shared at `~/Desktop/OPENFLIGHT/.venv` this session
-  (`source ~/Desktop/OPENFLIGHT/.venv/bin/activate`). `requirements.txt`
-  lists deps. `pyalsaaudio` is Linux-only (gated in requirements).
+- **venv**: `~/Desktop/LM-2/.venv` (`source .venv/bin/activate` from the
+  repo root) — moved here in the 2026-07-08 consolidation; the old shared
+  venv inside LM-1's folder is deleted. This matches the wizard's own
+  Pi layout (repo-root .venv). `requirements.txt` lists deps (+ pytest
+  installed for the bench suites). `pyalsaaudio` is Linux-only (gated in
+  requirements).
 - **This machine's environment**: macOS, Python 3.14, **Homebrew is broken**
   (Node was installed via `nvm` as a workaround; `poppler`/`pdftoppm` is
   unavailable — read PDFs via `pypdf` text extraction, not the Read tool's
@@ -79,9 +90,12 @@ writes land in the frozen LM-1 snapshot.
   python3 spin_capture_simulator.py --speed 165 --spin 2600  # synthetic spin path
   python3 geometry_capture_simulator.py           # geometry path: club/ball classifier
   python3 geometry_capture_simulator.py --sweep   # ...across 6 noise seeds
+  python3 scripts/audit9_dirt_battery.py          # T-series dirt probes (15, exit!=0 on FINDING)
   bash -n scripts/setup_wizard.sh
-  # with openflight_upstream symlinked:
+  # with openflight_upstream cloned at the pin (see section 2):
   python3 shot_simulator.py --ball-speed 165 --spin 2600 --launch-angle 13 --side-spin 900
+  # patch-surface changes additionally need (network):
+  ./scripts/check_patch_stack.sh                  # patches apply at pin AND HEAD (T-3 early warning)
   ```
 - **Commit style**: detailed messages explaining the WHY; end with
   `Co-Authored-By: Claude <model> <noreply@anthropic.com>`. Only commit/push
@@ -347,15 +361,51 @@ The load-bearing facts:
   ground-truth test; zero console noise (currently literally zero —
   errors AND warnings). Socket handlers hardened vs non-dict/garbage
   payloads (U-1..U-3, pinned by `tests/test_server_dirt.py`).
-- **Verification stack**: 890 Python unit + 45 UI unit + 6 Playwright e2e
-  (updated to the new UI) + golden physics tests. Patch re-verified
-  applying on a virgin upstream clone in wizard order after every change.
+- **Verification stack**: 937 Python unit (890 pre-T-3 rebase; upstream's
+  new tests now included) + 45 UI unit + 6 Playwright e2e (updated to the
+  new UI) + golden physics tests. Patch re-verified applying on a virgin
+  clone **of the pinned GitHub commit** in wizard order after every
+  change (audit #9 — the old "virgin clone" loop used LM-1's stale local
+  snapshot and missed upstream drift).
 - **Short game**: floor is ~14 mph ball (≈3.5 yd carry) at 83%, 17 mph at
   100%; `shortgame_probe.py --live` is the hardware bench script; the
   chip-regime classifier pass (phantoms at chip-speed practice swings) is
   the blocker before any short-game mode. See hardware-physics-limits.md.
 
 ---
+
+## 7c. Audit #9 (T-series, 2026-07-07/08) — top-down full-system dirt
+
+Johnny's brief: "topdown audit, with dirt, no stone unturned, nitpicky,
+check your work." Full detail in the audit log's newest entry. The facts
+a fresh session must carry:
+
+- **T-3 (the big one)**: upstream HEAD had moved past the tree every
+  patch was verified on, `ui_redesign.patch` no longer applied, and a Pi
+  bring-up that day would have silently shipped the stock UI. Fixed:
+  stack rebased onto `c623fe5`, patch regenerated + bit-identity-proven,
+  **wizard now pins `UPSTREAM_COMMIT`** (shallow fetch-by-SHA), and the
+  dev bench is a fresh GitHub clone in LM-2 (see §2). Found because
+  Johnny redirected the bench mid-audit — the local-snapshot bench had
+  masked it from audits #7/#8.
+- Real defects fixed and probe-verified: ghost spin from a dead audio
+  stream (T-5, staleness guard in `AudioRing.window`), `shortgame_probe
+  --live` doubly broken before hardware ever arrived (T-8),
+  `validate.py` crashing on/poisoned by mixed shots+swings logs (T-9),
+  missing `simple-websocket` = silent long-polling on the Pi (T-12) +
+  the werkzeug websocket-close traceback it would surface (T-1, shim in
+  the patched server.py), NaN rails at both output boundaries (T-7),
+  plus T-4/T-6/T-10 small crash paths and T-13 docs drift (the
+  "honest limits" doc carried the retracted ~10°-low claim).
+- **Screenshot anomalies from the 1 AM session were mid-session states,
+  not live bugs** — AoA tour-grading and mock source tags verified
+  correct by a live headless-browser press; console noise 0, server
+  tracebacks 0.
+- T-2 closed same session: the stale `~/Desktop/LM-2_handoff.pdf` and
+  the stray `~/Desktop/OPENFLIGHT copy/` workspace were both deleted on
+  Johnny's instruction (the copy verified first: 0 unpushed commits,
+  nothing unique — all content tracked in LM-1 or superseded in LM-2).
+  All 13 T-series findings are now closed.
 
 ## 8. The bring-up ladder (the plan for when hardware arrives)
 

@@ -172,6 +172,10 @@ def _fused_to_shot(fused: dict, club: ClubType) -> Shot:
         spin_confidence=fused.get("spin_confidence"),
         spin_source=fused.get("spin_source"),
         spin_axis_deg=fused.get("spin_axis_hint_deg"),
+        # Teed-ball lock range (M-7), when one formed -- the patched
+        # shot_to_dict forwards it and the UI renders a "Tee Range" card
+        # (audit #9 follow-on). Absent = None = no card, by design.
+        tee_range_m=fused.get("tee_range_m"),
         mode="hardware",
     )
 

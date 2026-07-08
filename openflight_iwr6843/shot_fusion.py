@@ -68,8 +68,28 @@ class AudioRing:
         """Complex I/Q slice covering [t_center-pre, t_center+post]."""
         with self.lock:
             age = self.t_last - t_center
-            n_back = int((age + pre) * self.fs)
             n_len = int((pre + post) * self.fs)
+            # Dead-stream guard (audit T-5): the window's TAIL is
+            # t_center+post, so samples must have ARRIVED after that
+            # moment or the ring cannot contain the shot at all. The
+            # fuser runs >= capture_window after impact (0.20/0.45 s,
+            # both > post), so a live stream always satisfies this; a
+            # stream that died mid-session leaves t_last frozen in the
+            # past, and the old math would then slice a window of the
+            # PREVIOUS shot's audio and re-decode it as this shot's spin
+            # (probe: a 30 s-stale ring decoded ok=True). Silence is the
+            # honest answer -- decode fails, the shot falls back to
+            # inferred spin, and the archived audio says what happened.
+            if age < post:
+                print(f"[audio] ring is stale (last sample "
+                      f"{max(0.0, -age):.1f}s before the requested window "
+                      f"tail) -- audio stream dead/stalled? returning "
+                      f"silence; spin falls back to inferred")
+                self.last_clip = {"adc_full_scale": False,
+                                  "plateau_frac": 0.0, "clipped": False,
+                                  "stale": True}
+                return np.zeros(max(n_len, 1), dtype=complex)
+            n_back = int((age + pre) * self.fs)
             # Staleness guard (audit F-5): if the request reaches further
             # back than the ring holds, the modulo math would silently wrap
             # and return unrelated newer samples as if they were the shot.
@@ -222,13 +242,32 @@ class ShotFuser:
         down shot processing."""
         try:
             import json
+            import math
             import os
             os.makedirs(directory, exist_ok=True)
             rec = dict(shot)
             rec["logged_at"] = time.time()       # wall clock; t_impact is
                                                  # host-monotonic, not epoch
+
+            def clean(v):
+                # Strict-JSON rail (audit T-7): json.dumps writes bare NaN/
+                # Infinity literals (spec-invalid; jq and JS parsers choke),
+                # and default=float mangled numpy bools/ints into floats
+                # ("swing": 0.0). Non-finite becomes null -- honest for a
+                # value that doesn't exist -- and numpy scalars land as
+                # their native JSON type.
+                if isinstance(v, (bool, np.bool_)):
+                    return bool(v)
+                if isinstance(v, (int, np.integer)):
+                    return int(v)
+                if isinstance(v, (float, np.floating)):
+                    return float(v) if math.isfinite(v) else None
+                return v
+
+            rec = {k: clean(v) for k, v in rec.items()}
             with open(os.path.join(directory, "shots.jsonl"), "a") as f:
-                f.write(json.dumps(rec, default=float) + "\n")
+                f.write(json.dumps(rec, default=float,
+                                   allow_nan=False) + "\n")
         except (OSError, TypeError, ValueError):
             pass
 

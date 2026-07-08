@@ -22,10 +22,13 @@ fit through that keyhole:
 - **Driver-class launch angle scatter: ±2°** (position noise across ~27
   fixes; audit #7 known limitations). More window = outdoor profile, not
   a parameter.
-- **Chip-class launch angle reads ~10° low, systematically** (audit F-7):
-  at ~1 m/s club-ball separation the two objects interleave inside
-  position noise and the angle fit blends them. Chip angles are
-  informational, full stop. Speed is unaffected (±1.3 mph).
+- **Chip-class launch angle scatters low: −3.6±3.8° (worst −13.6°) under
+  full dirt** (the measured V-7 residual — note the older "~10° low,
+  systematically" figure was RETRACTED in audit V-3b; most of it was a
+  gravity back-extrapolation sign bug, not physics): at ~1 m/s club-ball
+  separation the two objects interleave inside position noise and the
+  angle fit blends what remains. Chip angles are informational, full
+  stop. Speed is unaffected (±1.3 mph).
 - **Elevation is the coarsest axis** (single TX2 row drives it): the
   fine-elevation ablation collapses launch error to ±0.5°, i.e. the
   error is antenna geometry, not code.

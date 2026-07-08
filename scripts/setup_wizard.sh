@@ -38,6 +38,14 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_FILE="$REPO_ROOT/hardware.env"
 UPSTREAM_DIR="$REPO_ROOT/openflight_upstream"
 UPSTREAM_URL="https://github.com/jewbetcha/openflight.git"
+# PINNED upstream commit: the exact tree the patches/ stack and the LM-2
+# audits were verified against. An UNPINNED clone bit us once already
+# (audit #9, T-3): upstream merged a PR between our verification and a
+# fresh clone, and ui_redesign.patch stopped applying -- a Pi bring-up
+# that day would have silently shipped the old UI (the patch loop below
+# warns-and-continues). Bump this SHA only deliberately: re-run the
+# patch stack + full suites on the new commit first, then update it.
+UPSTREAM_COMMIT="c623fe52582a351eb035cadc2c619e5c96e0cb43"
 NEED_REBOOT=0
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
@@ -49,11 +57,31 @@ error(){ echo -e "${RED}[wizard]${NC} $1"; }
 
 log "Step 0: upstream OpenFlight checkout"
 if [ -d "$UPSTREAM_DIR" ]; then
-    log "$UPSTREAM_DIR already present, leaving the checkout as-is."
+    HAVE="$(git -C "$UPSTREAM_DIR" rev-parse HEAD 2>/dev/null || echo none)"
+    if [ "$HAVE" = "$UPSTREAM_COMMIT" ]; then
+        log "$UPSTREAM_DIR already present at the pinned commit."
+    else
+        warn "existing checkout is at ${HAVE:0:7}, but the verified pin is"
+        warn "${UPSTREAM_COMMIT:0:7}. Leaving it as-is (it may hold local"
+        warn "work) -- but the patch stack is only verified against the pin;"
+        warn "if patches fail below, check out the pin and re-run."
+    fi
 else
-    log "Cloning $UPSTREAM_URL -> $UPSTREAM_DIR ..."
-    git clone --depth 1 "$UPSTREAM_URL" "$UPSTREAM_DIR"
-    log "Cloned."
+    log "Cloning $UPSTREAM_URL @ ${UPSTREAM_COMMIT:0:7} -> $UPSTREAM_DIR ..."
+    # Shallow fetch of exactly the pinned commit (GitHub allows fetch-by-SHA)
+    # -- the full history is ~200 MB the Pi doesn't need. Fall back to a
+    # full clone + checkout if the shallow path is ever refused.
+    git init -q "$UPSTREAM_DIR"
+    git -C "$UPSTREAM_DIR" remote add origin "$UPSTREAM_URL"
+    if git -C "$UPSTREAM_DIR" fetch -q --depth 1 origin "$UPSTREAM_COMMIT"; then
+        git -C "$UPSTREAM_DIR" checkout -q FETCH_HEAD
+    else
+        warn "shallow fetch of the pin was refused; falling back to a full clone"
+        rm -rf "$UPSTREAM_DIR"
+        git clone "$UPSTREAM_URL" "$UPSTREAM_DIR"
+        git -C "$UPSTREAM_DIR" checkout -q "$UPSTREAM_COMMIT"
+    fi
+    log "Cloned at the pinned commit."
 fi
 # Re-apply our upstream changes: every patch in patches/, applied in glob
 # (alphabetical) order, which the loop below guarantees:
@@ -232,23 +260,34 @@ else
     # -- matching the interface-number sort below. Printed so it's
     # checkable against rung 1 (TI Demo Visualizer) rather than a silent
     # black box.
-    declare -A IFACE_NUM
-    for p in "${PORTS[@]}"; do
-        n=""
+    # Two scalars, not an associative array (audit T-11: `declare -A` is
+    # bash 4+, in a script that elsewhere avoids `mapfile` specifically
+    # for macOS's bash 3.2 — exactly two ports means plain variables do
+    # the job portably). CLI = the LOWER interface number ("Enhanced" =
+    # 0), matching the old sort's behavior including the "?" case
+    # (unknown ifaces sorted after digits, i.e. toward GEOM).
+    iface_of() {
+        local n=""
         if command -v udevadm >/dev/null 2>&1; then
-            n=$(udevadm info -a "$p" 2>/dev/null \
+            n=$(udevadm info -a "$1" 2>/dev/null \
                 | grep -m1 'ATTRS{bInterfaceNumber}' \
                 | grep -o '"[0-9]*"' | tr -d '"')
         fi
-        IFACE_NUM["$p"]="${n:-?}"
-    done
+        printf '%s' "${n:-?}"
+    }
+    IFACE_A="$(iface_of "${PORTS[0]}")"
+    IFACE_B="$(iface_of "${PORTS[1]}")"
+    if [ "$IFACE_B" != "?" ] && { [ "$IFACE_A" = "?" ] \
+            || [ "$IFACE_B" -lt "$IFACE_A" ]; }; then
+        CLI_PORT="${PORTS[1]}";  CLI_IFACE="$IFACE_B"
+        GEOM_PORT="${PORTS[0]}"; GEOM_IFACE="$IFACE_A"
+    else
+        CLI_PORT="${PORTS[0]}";  CLI_IFACE="$IFACE_A"
+        GEOM_PORT="${PORTS[1]}"; GEOM_IFACE="$IFACE_B"
+    fi
 
-    sorted=$(for p in "${PORTS[@]}"; do echo "${IFACE_NUM[$p]} $p"; done | sort)
-    CLI_PORT=$(echo "$sorted" | sed -n '1p' | awk '{print $2}')
-    GEOM_PORT=$(echo "$sorted" | sed -n '2p' | awk '{print $2}')
-
-    log "Detected: CLI_PORT=$CLI_PORT (interface ${IFACE_NUM[$CLI_PORT]}),"
-    log "          GEOM_PORT=$GEOM_PORT (interface ${IFACE_NUM[$GEOM_PORT]})"
+    log "Detected: CLI_PORT=$CLI_PORT (interface $CLI_IFACE),"
+    log "          GEOM_PORT=$GEOM_PORT (interface $GEOM_IFACE)"
     warn "This is a convention-based guess, not verified against your specific"
     warn "board -- confirm against the TI mmWave Demo Visualizer (rung 1) the"
     warn "first time before trusting it for real captures."
@@ -259,11 +298,11 @@ else
     if command -v udevadm >/dev/null 2>&1 && [ -n "$BOOT_CONFIG" ]; then
         serial=$(udevadm info -a "$CLI_PORT" 2>/dev/null \
             | grep -m1 '{serial}' | grep -o '"[^"]*"' | tr -d '"')
-        if [ -n "$serial" ] && [ "${IFACE_NUM[$CLI_PORT]}" != "?" ]; then
+        if [ -n "$serial" ] && [ "$CLI_IFACE" != "?" ]; then
             log "Writing persistent udev rule (serial=$serial, needs sudo)..."
             sudo tee /etc/udev/rules.d/99-iwr6843.rules >/dev/null <<RULES
-SUBSYSTEM=="tty", ATTRS{serial}=="$serial", ATTRS{bInterfaceNumber}=="${IFACE_NUM[$CLI_PORT]}", SYMLINK+="iwr6843_cli"
-SUBSYSTEM=="tty", ATTRS{serial}=="$serial", ATTRS{bInterfaceNumber}=="${IFACE_NUM[$GEOM_PORT]}", SYMLINK+="iwr6843_data"
+SUBSYSTEM=="tty", ATTRS{serial}=="$serial", ATTRS{bInterfaceNumber}=="$CLI_IFACE", SYMLINK+="iwr6843_cli"
+SUBSYSTEM=="tty", ATTRS{serial}=="$serial", ATTRS{bInterfaceNumber}=="$GEOM_IFACE", SYMLINK+="iwr6843_data"
 RULES
             sudo udevadm control --reload-rules
             sudo udevadm trigger

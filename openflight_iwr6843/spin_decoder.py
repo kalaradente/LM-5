@@ -192,6 +192,15 @@ def spin_from_residual(resid: np.ndarray, fs: int = FS, n_harmonics: int = 3,
 def decode(z: np.ndarray, fs: int = FS, bench: bool = False) -> dict:
     """Full chain on one capture window. bench=True for a spinning,
     non-translating target (drill rig). clean_iq strips mains hum first."""
+    # Tiny-window guard (audit T-6): below ~10 samples clean_iq's filtfilt
+    # blows up on its own padlen (the E-2 fix hardened _ridge, then the
+    # later-added mains notch reintroduced a crash path underneath it),
+    # and an EMPTY window crashes the bench path's rfftfreq indexing.
+    # 64 matches _ridge's own no-carrier floor -- nothing this short can
+    # carry a decodable tone at 96 kHz anyway.
+    if len(z) < 64:
+        return {"ok": False,
+                "reason": f"window too short ({len(z)} samples)"}
     z = clean_iq(z, fs)
     if bench:
         rpm, conf = spin_from_residual(z, fs)

@@ -48,16 +48,34 @@ def _read(path):
 
 
 def _col(rows, names):
-    keys = {k.lower().strip(): k for k in rows[0].keys()}
+    # Union of keys across ALL rows, and .get() per row (audit T-9): a
+    # real shots.jsonl is heterogeneous -- swing records carry no launch/
+    # side keys at all -- and first-row-keyed direct indexing crashed on
+    # the first mixed-session file. A row without the column scores NaN
+    # (excluded downstream), same as an empty CSV cell.
+    keys = {}
+    for r in rows:
+        for k in r.keys():
+            keys.setdefault(k.lower().strip(), k)
     for n in names:
         if n in keys:
-            return [float(r[keys[n]]) if r[keys[n]] not in ("", None)
-                    else np.nan for r in rows]
+            return [float(r[keys[n]])
+                    if r.get(keys[n]) not in ("", None) else np.nan
+                    for r in rows]
     return None
 
 
 def main(shots_path: str, truth_path: str):
     shots, truth = _read(shots_path), _read(truth_path)
+    # Speed-training swings have no truth counterpart (a truth unit only
+    # logs ball flight) and their structural ball_speed 0.0 poisons every
+    # aggregate if scored (audit T-9: one swing in a mixed session file
+    # contributed a 95 mph "error"). Drop them BEFORE order-pairing.
+    n_swings = sum(1 for s in shots if s.get("swing"))
+    if n_swings:
+        shots = [s for s in shots if not s.get("swing")]
+        print(f"note: dropped {n_swings} speed-training swing record(s) -- "
+              f"no truth counterpart; scoring ball shots only")
     n = min(len(shots), len(truth))
     if len(shots) != len(truth):
         print(f"warning: {len(shots)} shots vs {len(truth)} truth rows; "
