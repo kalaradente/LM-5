@@ -297,6 +297,17 @@ class IWR6843Monitor:
     def clear_session(self) -> None:
         self._shots = []
 
+    def delete_shot(self, timestamp: str) -> bool:
+        """Remove one shot from the SESSION by its isoformat timestamp
+        (the patched server's delete_shot handler calls this). Deliberately
+        does NOT touch captures/ (radar .npz, audio .npy, shots.jsonl) --
+        those are the tuning/validation dashcam, not session display state;
+        a deleted mishit is exactly the capture rung-3 wants to replay."""
+        before = len(self._shots)
+        self._shots = [s for s in self._shots
+                       if s.timestamp.isoformat() != timestamp]
+        return len(self._shots) != before
+
     def set_club(self, club: ClubType) -> None:
         self._current_club = club
 

@@ -226,7 +226,7 @@ index 4630ae0..53aa083 100644
      @property
      def ball_speed_ms(self) -> float:
 diff --git a/src/openflight/server.py b/src/openflight/server.py
-index 5ef4ce4..655889d 100644
+index 5ef4ce4..e75ffa7 100644
 --- a/src/openflight/server.py
 +++ b/src/openflight/server.py
 @@ -6,6 +6,7 @@ Provides real-time shot data to the web frontend via Flask-SocketIO.
@@ -304,7 +304,32 @@ index 5ef4ce4..655889d 100644
      try:
          club = ClubType(club_name)
          if monitor:
-@@ -1460,7 +1498,9 @@ def handle_simulate_custom_shot(data):
+@@ -1438,6 +1476,24 @@ def handle_clear_session():
+         socketio.emit("session_cleared")
+ 
+ 
++@socketio.on("delete_shot")
++def handle_delete_shot(data):
++    """Delete ONE shot from the session by its timestamp (the ledger row's
++    identity). Hardened per U-1: non-dict/missing/garbage payloads are
++    ignored, never crash the worker. On success every client resyncs via
++    the same session_state broadcast get_session uses -- stats recompute
++    included. Deleting from the SESSION does not touch the acquisition
++    layer's local capture archives (LM-2's captures/ dashcam) -- those are
++    tuning evidence, not session display state."""
++    ts = data.get("timestamp") if isinstance(data, dict) else None
++    if not monitor or not isinstance(ts, str) or not ts:
++        return
++    if hasattr(monitor, "delete_shot") and monitor.delete_shot(ts):
++        stats = monitor.get_session_stats()
++        shots = [shot_to_dict(s) for s in monitor.get_shots()]
++        socketio.emit("session_state", {"stats": stats, "shots": shots})
++
++
+ @socketio.on("get_session")
+ def handle_get_session():
+     """Get current session data."""
+@@ -1460,7 +1516,9 @@ def handle_simulate_custom_shot(data):
  
      Payload: {"ball_speed_mph": float, "spin_rpm": float,
                "launch_angle_deg": float, "side_angle_deg": float,
@@ -315,7 +340,7 @@ index 5ef4ce4..655889d 100644
      Any field can be omitted; omitted fields fall back to the same
      TrackMan-based random generation as simulate_shot(). Used by the
      plaintext shot simulator (see shot_simulator.py) to inject typed-in
-@@ -1469,13 +1509,32 @@ def handle_simulate_custom_shot(data):
+@@ -1469,13 +1527,32 @@ def handle_simulate_custom_shot(data):
      initial aim/push-pull direction, independent of the curve.
      """
      if monitor and isinstance(monitor, MockLaunchMonitor):
@@ -354,7 +379,7 @@ index 5ef4ce4..655889d 100644
          )
  
  
-@@ -1606,7 +1665,10 @@ def handle_set_session_mode(data=None):
+@@ -1606,7 +1683,10 @@ def handle_set_session_mode(data=None):
      that don't support live mode switching (mock, rolling-buffer) simply
      don't expose the method and the event reports unsupported.
      """
@@ -366,7 +391,7 @@ index 5ef4ce4..655889d 100644
      if not monitor or not hasattr(monitor, "set_session_mode"):
          socketio.emit(
              "session_mode_error",
-@@ -1809,6 +1871,58 @@ def _apply_calculated_spin(shot: Shot) -> bool:
+@@ -1809,6 +1889,58 @@ def _apply_calculated_spin(shot: Shot) -> bool:
      return True
  
  
@@ -425,7 +450,7 @@ index 5ef4ce4..655889d 100644
  def on_shot_detected(shot: Shot):
      """Callback when a shot is detected - emit to all clients."""
      global ball_detected, ball_detection_confidence  # pylint: disable=global-statement
-@@ -2237,6 +2351,11 @@ def on_shot_detected(shot: Shot):
+@@ -2237,6 +2369,11 @@ def on_shot_detected(shot: Shot):
              exc=e,
          )
  
@@ -437,7 +462,7 @@ index 5ef4ce4..655889d 100644
      # Emit shot with launch angle data included
      try:
          shot_data = shot_to_dict(shot)
-@@ -2436,10 +2555,14 @@ class MockLaunchMonitor:
+@@ -2436,10 +2573,14 @@ class MockLaunchMonitor:
      # TrackMan averages for amateur golfers: (avg_ball_speed, std_dev, smash_factor)
      _CLUB_BALL_SPEEDS = {
          ClubType.DRIVER: (143, 12, 1.45),
@@ -452,7 +477,7 @@ index 5ef4ce4..655889d 100644
          ClubType.HYBRID_5: (118, 9, 1.37),
          ClubType.HYBRID_7: (112, 8, 1.35),
          ClubType.HYBRID_9: (106, 8, 1.33),
-@@ -2461,10 +2584,14 @@ class MockLaunchMonitor:
+@@ -2461,10 +2602,14 @@ class MockLaunchMonitor:
      # Spin rates (avg_rpm, std_dev) — drivers: low spin, wedges: high spin
      _CLUB_SPIN = {
          ClubType.DRIVER: (2700, 400),
@@ -467,7 +492,7 @@ index 5ef4ce4..655889d 100644
          ClubType.HYBRID_5: (4200, 500),
          ClubType.HYBRID_7: (4600, 500),
          ClubType.HYBRID_9: (5000, 500),
-@@ -2486,10 +2613,14 @@ class MockLaunchMonitor:
+@@ -2486,10 +2631,14 @@ class MockLaunchMonitor:
      # Launch angles in degrees (avg, std_dev) — drivers: low, wedges: high
      _CLUB_LAUNCH = {
          ClubType.DRIVER: (11.0, 2.0),
@@ -482,7 +507,7 @@ index 5ef4ce4..655889d 100644
          ClubType.HYBRID_5: (15.0, 2.0),
          ClubType.HYBRID_7: (16.5, 2.0),
          ClubType.HYBRID_9: (18.0, 2.5),
-@@ -2514,6 +2645,33 @@ class MockLaunchMonitor:
+@@ -2514,6 +2663,33 @@ class MockLaunchMonitor:
          self._running = False
          self._shot_callback = None
          self._current_club = ClubType.DRIVER
@@ -516,7 +541,7 @@ index 5ef4ce4..655889d 100644
  
      def connect(self):
          """Connect to mock radar (no-op)."""
-@@ -2541,6 +2699,9 @@ class MockLaunchMonitor:
+@@ -2541,6 +2717,9 @@ class MockLaunchMonitor:
          launch_h: float = None,
          spin_axis: float = None,
          club: str = None,
@@ -526,7 +551,7 @@ index 5ef4ce4..655889d 100644
      ):
          """Simulate a shot for testing using realistic TrackMan-based values.
  
-@@ -2556,7 +2717,9 @@ class MockLaunchMonitor:
+@@ -2556,7 +2735,9 @@ class MockLaunchMonitor:
          it's independent of launch_h, which is just the initial aim/push-pull
          direction.
          """
@@ -537,7 +562,7 @@ index 5ef4ce4..655889d 100644
  
          if club is not None:
              try:
-@@ -2566,11 +2729,29 @@ class MockLaunchMonitor:
+@@ -2566,11 +2747,29 @@ class MockLaunchMonitor:
  
          avg_speed, std_dev, smash = self._CLUB_BALL_SPEEDS.get(self._current_club, (120, 15, 1.35))
  
@@ -569,7 +594,7 @@ index 5ef4ce4..655889d 100644
  
          # Generate spin
          avg_spin, spin_std = self._CLUB_SPIN.get(self._current_club, (5000, 800))
-@@ -2585,8 +2766,18 @@ class MockLaunchMonitor:
+@@ -2585,8 +2784,18 @@ class MockLaunchMonitor:
              launch_h = random.gauss(0, 2.0)
          launch_confidence = 1.0 if manual else round(random.uniform(0.5, 0.95), 2)
  
@@ -590,7 +615,7 @@ index 5ef4ce4..655889d 100644
  
          shot = Shot(
              ball_speed_mph=ball_speed,
-@@ -2604,7 +2795,7 @@ class MockLaunchMonitor:
+@@ -2604,7 +2813,7 @@ class MockLaunchMonitor:
              launch_angle_horizontal_source="manual" if manual else "mock",
              angle_source="manual" if manual else "mock",
              club_angle_deg=club_aoa,
@@ -599,6 +624,20 @@ index 5ef4ce4..655889d 100644
              spin_axis_deg=round(spin_axis, 1) if spin_axis is not None
              else round(launch_h - random.uniform(-5.0, 5.0), 1),
              mode="mock",
+@@ -2662,6 +2871,13 @@ class MockLaunchMonitor:
+         """Clear all recorded shots."""
+         self._shots = []
+ 
++    def delete_shot(self, timestamp: str) -> bool:
++        """Remove one shot by its isoformat timestamp (shot_to_dict's
++        "timestamp" field -- the ledger row identity)."""
++        before = len(self._shots)
++        self._shots = [s for s in self._shots if s.timestamp.isoformat() != timestamp]
++        return len(self._shots) != before
++
+     def set_club(self, club: ClubType):
+         """Set the current club for future shots."""
+         self._current_club = club
 diff --git a/src/openflight/sim/resolver.py b/src/openflight/sim/resolver.py
 index c9426eb..4a3ea62 100644
 --- a/src/openflight/sim/resolver.py
@@ -700,10 +739,10 @@ index 0000000..248268f
 +        assert 5.0 <= t <= 8.0, f"{club}: hang time {t:.1f}s outside physical range"
 diff --git a/tests/test_server_dirt.py b/tests/test_server_dirt.py
 new file mode 100644
-index 0000000..2898f3d
+index 0000000..89ef476
 --- /dev/null
 +++ b/tests/test_server_dirt.py
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,162 @@
 +"""Audit U-1 regressions: socket handlers must survive hostile payloads.
 +
 +The mock server is the surface the whole UI (and any third-party client)
@@ -837,6 +876,35 @@ index 0000000..2898f3d
 +    assert s.club_angle_deg == 20.0
 +    assert s.club_path_deg == -20.0
 +    assert s.club_speed_mph == 150.0
++
++
++# --- delete_shot: hardened per-row session delete ---
++
++def test_delete_shot_survives_garbage(mock_monitor):
++    for payload in ("boom", 42, None, [], {}, {"timestamp": None},
++                    {"timestamp": 123}, {"timestamp": "not-a-real-ts"}):
++        server_module.handle_delete_shot(payload)   # must never raise
++
++
++def test_delete_shot_removes_exactly_one_and_recomputes(mock_monitor):
++    server_module.handle_simulate_custom_shot({"ball_speed_mph": 150.0})
++    server_module.handle_simulate_custom_shot({"ball_speed_mph": 100.0})
++    shots = mock_monitor.get_shots()
++    assert len(shots) == 2
++    victim = shots[0].timestamp.isoformat()
++    server_module.handle_delete_shot({"timestamp": victim})
++    left = mock_monitor.get_shots()
++    assert len(left) == 1
++    assert left[0].timestamp.isoformat() != victim
++    stats = mock_monitor.get_session_stats()
++    assert stats["shot_count"] == 1
++    assert stats["max_ball_speed"] == left[0].ball_speed_mph
++
++
++def test_delete_shot_unknown_timestamp_is_noop(mock_monitor):
++    server_module.handle_simulate_custom_shot({"ball_speed_mph": 150.0})
++    server_module.handle_delete_shot({"timestamp": "2001-01-01T00:00:00"})
++    assert len(mock_monitor.get_shots()) == 1
 diff --git a/ui/index.html b/ui/index.html
 index 592716b..b378260 100644
 --- a/ui/index.html
@@ -1495,7 +1563,7 @@ index 9dc7fcd..e3d6b38 100644
 -  overflow: visible;
 -}
 diff --git a/ui/src/App.tsx b/ui/src/App.tsx
-index 7fecac0..797cfd1 100644
+index 7fecac0..6dcdc37 100644
 --- a/ui/src/App.tsx
 +++ b/ui/src/App.tsx
 @@ -18,15 +18,17 @@ import { ClubPicker } from './components/ClubPicker';
@@ -1694,7 +1762,7 @@ index 7fecac0..797cfd1 100644
              <p>Shut down OpenFlight?</p>
              <div className="shutdown-dialog__buttons">
                <button className="shutdown-dialog__confirm" onClick={() => { shutdown(); setShowShutdown(false); }}>
-@@ -291,7 +337,15 @@ function AppContent() {
+@@ -291,21 +337,29 @@ function AppContent() {
              {sessionMode === 'speed' ? (
                <SwingDisplay shots={shots} latestShot={latestShot} animate={isNewShot} />
              ) : (
@@ -1710,7 +1778,27 @@ index 7fecac0..797cfd1 100644
 +              </>
              )}
              {debugMode && <SimShotBadges latestSimShots={latestSimShots} />}
-             {mockMode && (
+-            {mockMode && (
+-              <button className="simulate-button" onClick={() => socketService.simulateShot()}>
+-                Simulate Shot
+-              </button>
+-            )}
+           </div>
+         )}
+         {currentView === 'stats' && <StatsView shots={shots} onClearSession={() => socketService.clearSession()} />}
+-        {currentView === 'shots' && <ShotList shots={shots} />}
++        {currentView === 'shots' && <ShotList shots={shots} onDeleteShot={(ts) => socketService.deleteShot(ts)} />}
+         {currentView === 'camera' && (
+           <CameraFeed cameraStatus={cameraStatus} onToggleCamera={() => socketService.toggleCamera()} onToggleStream={() => socketService.toggleCameraStream()} />
+         )}
++        {currentView === 'debug' && mockMode && (
++          <button className="simulate-button" onClick={() => socketService.simulateShot()}>
++            Simulate Shot
++          </button>
++        )}
+         {currentView === 'debug' && (
+           <DebugPanel
+             enabled={debugMode}
 diff --git a/ui/src/components/BallDetectionIndicator.css b/ui/src/components/BallDetectionIndicator.css
 index 133dd35..7158f7d 100644
 --- a/ui/src/components/BallDetectionIndicator.css
@@ -6249,7 +6337,7 @@ index cd645e3..ebbdce7 100644
      ),
    });
 diff --git a/ui/src/components/ShotList.css b/ui/src/components/ShotList.css
-index 42e8f1d..9d277b2 100644
+index 42e8f1d..e594ba5 100644
 --- a/ui/src/components/ShotList.css
 +++ b/ui/src/components/ShotList.css
 @@ -1,97 +1,83 @@
@@ -6386,7 +6474,7 @@ index 42e8f1d..9d277b2 100644
  }
  
  /* Pagination */
-@@ -99,90 +85,57 @@
+@@ -99,90 +85,85 @@
    display: flex;
    align-items: center;
    justify-content: center;
@@ -6466,8 +6554,10 @@ index 42e8f1d..9d277b2 100644
 -  .shot-row__number {
 -    font-size: 0.8125rem;
 -    min-width: 2rem;
--  }
--
++    flex-wrap: wrap;
++    gap: var(--space-sm) var(--space-md);
+   }
+ 
 -  .shot-row__club {
 -    font-size: 0.6875rem;
 -    min-width: 3rem;
@@ -6480,20 +6570,28 @@ index 42e8f1d..9d277b2 100644
 -
 -  .shot-row__label {
 -    font-size: 0.5625rem;
-+    flex-wrap: wrap;
-+    gap: var(--space-sm) var(--space-md);
-   }
- 
-   .shot-row__stat {
--    max-width: 4rem;
--  }
--
--  .pagination {
--    padding-top: var(--space-sm);
--    gap: var(--space-sm);
++  .shot-row__stat {
 +    flex: 1 0 20%;
 +    align-items: flex-start;
    }
++}
+ 
++@media (max-width: 480px) {
+   .shot-row__stat {
+-    max-width: 4rem;
++    flex: 1 0 30%;
+   }
++}
+ 
+-  .pagination {
+-    padding-top: var(--space-sm);
+-    gap: var(--space-sm);
+-  }
++/* Session actions row: explicit save (nothing persists unless pressed). */
++.shot-list__actions {
++  display: flex;
++  justify-content: flex-end;
++  margin-bottom: 0.5rem;
 +}
  
 -  .pagination__button {
@@ -6501,16 +6599,32 @@ index 42e8f1d..9d277b2 100644
 -    min-height: 38px;
 -    min-width: 70px;
 -    font-size: 0.75rem;
-+@media (max-width: 480px) {
-+  .shot-row__stat {
-+    flex: 1 0 30%;
-   }
+-  }
++/* Per-row delete: quiet bordered key, danger only on hover (the
++   destructive-restraint rule -- never loud until touched). */
++.shot-row__delete {
++  min-width: 32px;
++  height: 32px;
++  margin-left: 0.5rem;
++  background: transparent;
++  color: var(--ink-muted, #8a8578);
++  border: 1px solid var(--border, #4a463c);
++  border-radius: 4px;
++  cursor: pointer;
++  font-size: 0.8125rem;
++  line-height: 1;
++  align-self: center;
++}
++
++.shot-row__delete:hover {
++  color: var(--state-danger, #c4453a);
++  border-color: var(--state-danger, #c4453a);
  }
 diff --git a/ui/src/components/ShotList.tsx b/ui/src/components/ShotList.tsx
-index e2dd911..f1f8948 100644
+index e2dd911..1cff323 100644
 --- a/ui/src/components/ShotList.tsx
 +++ b/ui/src/components/ShotList.tsx
-@@ -1,8 +1,10 @@
+@@ -1,14 +1,19 @@
  import { useMemo, useState, memo } from 'react';
  import type { Shot } from '../types/shot';
  import { useUnitPreference } from '../state/useUnitPreference';
@@ -6519,14 +6633,24 @@ index e2dd911..f1f8948 100644
  import type { UnitSystem } from '../utils/units';
 -import { formatDistance, formatSpeed, getDistanceUnit } from '../utils/units';
 +import { formatClubPath, formatDistance, formatPeakHeight, formatSpeed, getDistanceUnit } from '../utils/units';
++import { downloadSession } from '../utils/sessionExport';
  import './ShotList.css';
  
  const SHOTS_PER_PAGE = 5;
-@@ -16,35 +18,63 @@ interface ShotRowProps {
+ 
+ interface ShotListProps {
+   shots: Shot[];
++  /** Server-backed delete; the row's timestamp is its identity. */
++  onDeleteShot?: (timestamp: string) => void;
+ }
+ 
+ interface ShotRowProps {
+@@ -16,55 +21,98 @@ interface ShotRowProps {
    shotNumber: number;
    unitSystem: UnitSystem;
    distanceUnit: string;
 +  handedness: Handedness;
++  onDelete?: (timestamp: string) => void;
  }
  
 -const ShotRow = memo(function ShotRow({ shot, shotNumber, unitSystem, distanceUnit }: ShotRowProps) {
@@ -6537,7 +6661,7 @@ index e2dd911..f1f8948 100644
 +  return `${sign}${value.toFixed(digits)}${opts?.suffix ?? ''}`;
 +}
 +
-+const ShotRow = memo(function ShotRow({ shot, shotNumber, unitSystem, distanceUnit, handedness }: ShotRowProps) {
++const ShotRow = memo(function ShotRow({ shot, shotNumber, unitSystem, distanceUnit, handedness, onDelete }: ShotRowProps) {
    // Speed-training swing: club speed is the only real metric — ball_speed
    // is a structural 0 and carry/launch/spin don't exist. Tag the row and
 -  // dash the ball column instead of printing a misleading 0.0.
@@ -6604,23 +6728,94 @@ index e2dd911..f1f8948 100644
 +        </span>
          <span className="shot-row__label">{distanceUnit}</span>
        </span>
++      {onDelete && (
++        <button
++          className="shot-row__delete"
++          aria-label={`Delete shot ${shotNumber}`}
++          title="Delete this shot from the session"
++          onClick={() => onDelete(shot.timestamp)}
++        >
++          ✕
++        </button>
++      )}
      </div>
-@@ -54,6 +84,7 @@ const ShotRow = memo(function ShotRow({ shot, shotNumber, unitSystem, distanceUn
- export function ShotList({ shots }: ShotListProps) {
+   );
+ });
+ 
+-export function ShotList({ shots }: ShotListProps) {
++export function ShotList({ shots, onDeleteShot }: ShotListProps) {
    const [page, setPage] = useState(0);
    const { unitSystem } = useUnitPreference();
 +  const { handedness } = useHandednessPreference();
    const distanceUnit = getDistanceUnit(unitSystem);
  
    const totalPages = Math.ceil(shots.length / SHOTS_PER_PAGE);
-@@ -84,6 +115,7 @@ export function ShotList({ shots }: ShotListProps) {
++  // Deleting the last row of the last page must not strand the view on an
++  // empty page: clamp the page to what exists NOW.
++  const safePage = Math.min(page, Math.max(0, totalPages - 1));
+ 
+   const pageShots = useMemo(() => {
+     const reversed = [...shots].reverse();
+-    const startIndex = page * SHOTS_PER_PAGE;
++    const startIndex = safePage * SHOTS_PER_PAGE;
+     return reversed.slice(startIndex, startIndex + SHOTS_PER_PAGE);
+-  }, [shots, page]);
++  }, [shots, safePage]);
+ 
+-  const startIndex = page * SHOTS_PER_PAGE;
++  const startIndex = safePage * SHOTS_PER_PAGE;
+ 
+   if (shots.length === 0) {
+     return (
+@@ -76,6 +124,15 @@ export function ShotList({ shots }: ShotListProps) {
+ 
+   return (
+     <div className="shot-list">
++      <div className="shot-list__actions">
++        <button
++          className="pagination__button shot-list__save"
++          onClick={() => downloadSession(shots)}
++          title="Download this session as CSV (nothing is saved unless you do)"
++        >
++          Save Session
++        </button>
++      </div>
+       <div className="shot-list__rows">
+         {pageShots.map((shot, index) => (
+           <ShotRow
+@@ -84,6 +141,8 @@ export function ShotList({ shots }: ShotListProps) {
              shotNumber={shots.length - startIndex - index}
              unitSystem={unitSystem}
              distanceUnit={distanceUnit}
 +            handedness={handedness}
++            onDelete={onDeleteShot}
            />
          ))}
        </div>
+@@ -92,18 +151,18 @@ export function ShotList({ shots }: ShotListProps) {
+         <div className="pagination">
+           <button
+             className="pagination__button"
+-            onClick={() => setPage((p) => Math.max(0, p - 1))}
+-            disabled={page === 0}
++            onClick={() => setPage(Math.max(0, safePage - 1))}
++            disabled={safePage === 0}
+           >
+             Prev
+           </button>
+           <span className="pagination__info">
+-            {page + 1} / {totalPages}
++            {safePage + 1} / {totalPages}
+           </span>
+           <button
+             className="pagination__button"
+-            onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+-            disabled={page === totalPages - 1}
++            onClick={() => setPage(Math.min(totalPages - 1, safePage + 1))}
++            disabled={safePage === totalPages - 1}
+           >
+             Next
+           </button>
 diff --git a/ui/src/components/SimShotBadges.css b/ui/src/components/SimShotBadges.css
 index f8dd610..16be230 100644
 --- a/ui/src/components/SimShotBadges.css
@@ -7980,6 +8175,21 @@ index 4215cbc..ff8ac02 100644
        >
          {/* O Base / C Shape */}
          <path
+diff --git a/ui/src/services/socketService.ts b/ui/src/services/socketService.ts
+index caaac88..b078d8c 100644
+--- a/ui/src/services/socketService.ts
++++ b/ui/src/services/socketService.ts
+@@ -166,6 +166,10 @@ class SocketService {
+     this.socket?.emit('clear_session');
+   }
+ 
++  deleteShot(timestamp: string) {
++    this.socket?.emit('delete_shot', { timestamp });
++  }
++
+   setClub(club: string) {
+     this.socket?.emit('set_club', { club });
+   }
 diff --git a/ui/src/state/useHandednessPreference.ts b/ui/src/state/useHandednessPreference.ts
 new file mode 100644
 index 0000000..78cf39c
@@ -8227,6 +8437,127 @@ index 7d347ff..4468d52 100644
    };
  }
  
+diff --git a/ui/src/utils/sessionExport.test.ts b/ui/src/utils/sessionExport.test.ts
+new file mode 100644
+index 0000000..3e26b7d
+--- /dev/null
++++ b/ui/src/utils/sessionExport.test.ts
+@@ -0,0 +1,57 @@
++import { describe, expect, it } from 'vitest';
++import type { Shot } from '../types/shot';
++import { sessionFilename, sessionToCsv } from './sessionExport';
++
++function shot(overrides: Partial<Shot>): Shot {
++  return {
++    ball_speed_mph: 167,
++    club_speed_mph: 113,
++    smash_factor: 1.48,
++    estimated_carry_yards: 275,
++    carry_range: [260, 290],
++    club: 'driver',
++    timestamp: '2026-07-08T12:00:00',
++    peak_magnitude: null,
++    launch_angle_vertical: 10.9,
++    launch_angle_horizontal: 0.3,
++    launch_angle_confidence: 1,
++    angle_source: 'radar',
++    club_angle_deg: 3.0,
++    club_path_deg: 3.0,
++    spin_axis_deg: -3.0,
++    spin_rpm: 2686,
++    spin_confidence: 1,
++    spin_quality: 'high',
++    spin_source: 'measured',
++    carry_spin_adjusted: 264.6,
++    ...overrides,
++  };
++}
++
++describe('sessionToCsv (explicit Save Session export)', () => {
++  it('writes raw physical units with TrackMan signs, one row per shot', () => {
++    const csv = sessionToCsv([shot({})]);
++    const [head, row] = csv.trim().split('\n');
++    expect(head).toContain('ball_speed_mph');
++    expect(head).toContain('club_path_deg');
++    expect(row).toContain('167');
++    expect(row).toContain('3');        // AoA, raw signed number, no letters
++    expect(row).toContain('264.6');    // spin-adjusted carry preferred
++  });
++
++  it('dashes ball columns for speed-training swings via empty cells', () => {
++    const csv = sessionToCsv([shot({ mode: 'speed-training', ball_speed_mph: 0 })]);
++    const row = csv.trim().split('\n')[1];
++    expect(row.split(',')[1]).toBe('speed-training');
++    expect(row.split(',')[3]).toBe(''); // ball speed empty, not a fake 0
++  });
++
++  it('escapes cells containing commas/quotes', () => {
++    const csv = sessionToCsv([shot({ club: 'driver, "custom"' as never })]);
++    expect(csv).toContain('"driver, ""custom"""');
++  });
++
++  it('filename is sortable and dated', () => {
++    expect(sessionFilename(new Date(2026, 6, 8, 22, 5))).toBe('openflight_session_20260708_2205.csv');
++  });
++});
+diff --git a/ui/src/utils/sessionExport.ts b/ui/src/utils/sessionExport.ts
+new file mode 100644
+index 0000000..f0d6488
+--- /dev/null
++++ b/ui/src/utils/sessionExport.ts
+@@ -0,0 +1,52 @@
++/* Explicit session save (Johnny's spec): nothing is exported unless the
++   user presses Save Session. Produces a CSV of the ledger in RAW physical
++   units and TrackMan sign conventions (a saved log is data for later
++   analysis, not display formatting — handedness/unit toggles do not apply
++   here; the letters/units belong to the screen). */
++import type { Shot } from '../types/shot';
++
++const COLUMNS: { header: string; value: (s: Shot) => string | number | null }[] = [
++  { header: 'timestamp', value: (s) => s.timestamp },
++  { header: 'mode', value: (s) => s.mode ?? 'shot' },
++  { header: 'club', value: (s) => s.club },
++  { header: 'ball_speed_mph', value: (s) => (s.mode === 'speed-training' ? null : s.ball_speed_mph) },
++  { header: 'club_speed_mph', value: (s) => s.club_speed_mph },
++  { header: 'smash_factor', value: (s) => (s.mode === 'speed-training' ? null : s.smash_factor) },
++  { header: 'launch_deg', value: (s) => s.launch_angle_vertical },
++  { header: 'h_launch_deg', value: (s) => s.launch_angle_horizontal },
++  { header: 'spin_rpm', value: (s) => s.spin_rpm },
++  { header: 'spin_axis_deg', value: (s) => s.spin_axis_deg },
++  { header: 'club_aoa_deg', value: (s) => s.club_angle_deg },
++  { header: 'club_path_deg', value: (s) => s.club_path_deg },
++  { header: 'carry_yards', value: (s) => s.carry_spin_adjusted ?? s.estimated_carry_yards },
++  { header: 'apex_ft', value: (s) => (s.trajectory ? Math.round(s.trajectory.apex_yards * 3) : null) },
++  { header: 'lateral_yards', value: (s) => s.trajectory?.lateral_yards ?? null },
++  { header: 'tee_range_m', value: (s) => s.tee_range_m ?? null },
++];
++
++function cell(v: string | number | null): string {
++  if (v === null || v === undefined) return '';
++  const t = String(v);
++  return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
++}
++
++export function sessionToCsv(shots: Shot[]): string {
++  const head = COLUMNS.map((c) => c.header).join(',');
++  const rows = shots.map((s) => COLUMNS.map((c) => cell(c.value(s))).join(','));
++  return [head, ...rows].join('\n') + '\n';
++}
++
++export function sessionFilename(now: Date = new Date()): string {
++  const p = (n: number) => String(n).padStart(2, '0');
++  return `openflight_session_${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}_${p(now.getHours())}${p(now.getMinutes())}.csv`;
++}
++
++export function downloadSession(shots: Shot[]): void {
++  const blob = new Blob([sessionToCsv(shots)], { type: 'text/csv' });
++  const url = URL.createObjectURL(blob);
++  const a = document.createElement('a');
++  a.href = url;
++  a.download = sessionFilename();
++  a.click();
++  URL.revokeObjectURL(url);
++}
 diff --git a/ui/src/utils/tracerProjection.ts b/ui/src/utils/tracerProjection.ts
 new file mode 100644
 index 0000000..d76090e
@@ -8383,11 +8714,18 @@ index 2af0476..e289dbb 100644
 +  return { value, dir: inToOut ? 'I-O' : 'O-I' };
 +}
 diff --git a/ui/tests/e2e/app.spec.ts b/ui/tests/e2e/app.spec.ts
-index 981b292..a639ba2 100644
+index 981b292..bd829d1 100644
 --- a/ui/tests/e2e/app.spec.ts
 +++ b/ui/tests/e2e/app.spec.ts
-@@ -48,8 +48,12 @@ test('renders live shot data and mock-mode simulate flow', async ({ page }) => {
+@@ -44,12 +44,19 @@ test('renders live shot data and mock-mode simulate flow', async ({ page }) => {
+   await gotoApp(page);
+   await page.getByRole('button', { name: 'Close club selection' }).click();
+ 
++  // Simulate Shot lives on the Debug tab now (off the instrument face).
++  await page.getByRole('button', { name: 'Debug' }).click();
+   await expect(page.getByRole('button', { name: 'Simulate Shot' })).toBeVisible();
    await page.getByRole('button', { name: 'Simulate Shot' }).click();
++  await page.getByRole('button', { name: 'Live' }).click();
  
    await expect(page.getByText('Ready for your shot')).toBeHidden();
 -  await expect(page.locator('.speed-gauge__value')).not.toHaveText('--');
@@ -8401,7 +8739,17 @@ index 981b292..a639ba2 100644
  });
  
  test('switches between primary navigation views', async ({ page }) => {
-@@ -107,14 +111,17 @@ test('unit toggle updates displayed units', async ({ page }) => {
+@@ -77,7 +84,8 @@ test('switches between primary navigation views', async ({ page }) => {
+   await expect(page.getByText('mock')).toBeVisible();
+ 
+   await page.getByRole('button', { name: 'Live' }).click();
+-  await expect(page.getByRole('button', { name: 'Simulate Shot' })).toBeVisible();
++  // The instrument face carries no simulate key any more.
++  await expect(page.getByRole('button', { name: 'Simulate Shot' })).toBeHidden();
+ });
+ 
+ test('display route shows latest shot and recent shots from mock backend session', async ({ page }) => {
+@@ -107,14 +115,17 @@ test('unit toggle updates displayed units', async ({ page }) => {
    await gotoApp(page);
    await page.getByRole('button', { name: 'Close club selection' }).click();
  
