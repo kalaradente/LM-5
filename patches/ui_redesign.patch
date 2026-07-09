@@ -1,15 +1,3 @@
-diff --git a/captures/shots.jsonl b/captures/shots.jsonl
-new file mode 100644
-index 0000000..9c5b9ab
---- /dev/null
-+++ b/captures/shots.jsonl
-@@ -0,0 +1,6 @@
-+{"swing": true, "spin_rpm": null, "spin_source": null, "spin_confidence": 0.0, "spin_axis_hint_deg": null, "environment": "indoor", "ball_type": "plain", "mode": "play", "logged_at": 1783478364.58323}
-+{"t_impact": 1.0, "ball_speed_mph": 50.0, "spin_rpm": null, "spin_source": null, "spin_confidence": 0.0, "spin_axis_hint_deg": null, "environment": "indoor", "ball_type": "plain", "mode": "play", "logged_at": 1783478364.583362}
-+{"t_impact": 1.0, "ball_speed_mph": null, "launch_angle_deg": null, "spin_rpm": null, "spin_source": null, "spin_confidence": 0.0, "spin_axis_hint_deg": null, "environment": "indoor", "ball_type": "plain", "mode": "play", "logged_at": 1783478364.583415}
-+{"swing": true, "spin_rpm": null, "spin_source": null, "spin_confidence": 0.0, "spin_axis_hint_deg": null, "environment": "indoor", "ball_type": "plain", "mode": "play", "logged_at": 1783478558.1404831}
-+{"t_impact": 1.0, "ball_speed_mph": 50.0, "spin_rpm": null, "spin_source": null, "spin_confidence": 0.0, "spin_axis_hint_deg": null, "environment": "indoor", "ball_type": "plain", "mode": "play", "logged_at": 1783478558.140794}
-+{"t_impact": 1.0, "ball_speed_mph": null, "launch_angle_deg": null, "spin_rpm": null, "spin_source": null, "spin_confidence": 0.0, "spin_axis_hint_deg": null, "environment": "indoor", "ball_type": "plain", "mode": "play", "logged_at": 1783478558.1408598}
 diff --git a/scripts/tune_ballistics.py b/scripts/tune_ballistics.py
 new file mode 100644
 index 0000000..064b943
@@ -238,7 +226,7 @@ index 4630ae0..53aa083 100644
      @property
      def ball_speed_ms(self) -> float:
 diff --git a/src/openflight/server.py b/src/openflight/server.py
-index 5ef4ce4..775091d 100644
+index 5ef4ce4..655889d 100644
 --- a/src/openflight/server.py
 +++ b/src/openflight/server.py
 @@ -6,6 +6,7 @@ Provides real-time shot data to the web frontend via Flask-SocketIO.
@@ -316,7 +304,18 @@ index 5ef4ce4..775091d 100644
      try:
          club = ClubType(club_name)
          if monitor:
-@@ -1469,13 +1507,29 @@ def handle_simulate_custom_shot(data):
+@@ -1460,7 +1498,9 @@ def handle_simulate_custom_shot(data):
+ 
+     Payload: {"ball_speed_mph": float, "spin_rpm": float,
+               "launch_angle_deg": float, "side_angle_deg": float,
+-              "spin_axis_deg": float, "club": str}
++              "spin_axis_deg": float, "club": str,
++              "club_speed_mph": float, "club_angle_deg": float (AoA, + = up),
++              "club_path_deg": float (+ = in-to-out for RH)}
+     Any field can be omitted; omitted fields fall back to the same
+     TrackMan-based random generation as simulate_shot(). Used by the
+     plaintext shot simulator (see shot_simulator.py) to inject typed-in
+@@ -1469,13 +1509,32 @@ def handle_simulate_custom_shot(data):
      initial aim/push-pull direction, independent of the curve.
      """
      if monitor and isinstance(monitor, MockLaunchMonitor):
@@ -349,10 +348,13 @@ index 5ef4ce4..775091d 100644
 +            launch_h=_clean("side_angle_deg", -45.0, 45.0),
 +            spin_axis=_clean("spin_axis_deg", -45.0, 45.0),
 +            club=data.get("club") if isinstance(data.get("club"), str) else None,
++            club_speed=_clean("club_speed_mph", 10.0, 150.0),
++            club_aoa=_clean("club_angle_deg", -20.0, 20.0),
++            club_path=_clean("club_path_deg", -20.0, 20.0),
          )
  
  
-@@ -1606,7 +1660,10 @@ def handle_set_session_mode(data=None):
+@@ -1606,7 +1665,10 @@ def handle_set_session_mode(data=None):
      that don't support live mode switching (mock, rolling-buffer) simply
      don't expose the method and the event reports unsupported.
      """
@@ -364,7 +366,7 @@ index 5ef4ce4..775091d 100644
      if not monitor or not hasattr(monitor, "set_session_mode"):
          socketio.emit(
              "session_mode_error",
-@@ -1809,6 +1866,58 @@ def _apply_calculated_spin(shot: Shot) -> bool:
+@@ -1809,6 +1871,58 @@ def _apply_calculated_spin(shot: Shot) -> bool:
      return True
  
  
@@ -423,7 +425,7 @@ index 5ef4ce4..775091d 100644
  def on_shot_detected(shot: Shot):
      """Callback when a shot is detected - emit to all clients."""
      global ball_detected, ball_detection_confidence  # pylint: disable=global-statement
-@@ -2237,6 +2346,11 @@ def on_shot_detected(shot: Shot):
+@@ -2237,6 +2351,11 @@ def on_shot_detected(shot: Shot):
              exc=e,
          )
  
@@ -435,7 +437,7 @@ index 5ef4ce4..775091d 100644
      # Emit shot with launch angle data included
      try:
          shot_data = shot_to_dict(shot)
-@@ -2436,10 +2550,14 @@ class MockLaunchMonitor:
+@@ -2436,10 +2555,14 @@ class MockLaunchMonitor:
      # TrackMan averages for amateur golfers: (avg_ball_speed, std_dev, smash_factor)
      _CLUB_BALL_SPEEDS = {
          ClubType.DRIVER: (143, 12, 1.45),
@@ -450,7 +452,7 @@ index 5ef4ce4..775091d 100644
          ClubType.HYBRID_5: (118, 9, 1.37),
          ClubType.HYBRID_7: (112, 8, 1.35),
          ClubType.HYBRID_9: (106, 8, 1.33),
-@@ -2461,10 +2579,14 @@ class MockLaunchMonitor:
+@@ -2461,10 +2584,14 @@ class MockLaunchMonitor:
      # Spin rates (avg_rpm, std_dev) — drivers: low spin, wedges: high spin
      _CLUB_SPIN = {
          ClubType.DRIVER: (2700, 400),
@@ -465,7 +467,7 @@ index 5ef4ce4..775091d 100644
          ClubType.HYBRID_5: (4200, 500),
          ClubType.HYBRID_7: (4600, 500),
          ClubType.HYBRID_9: (5000, 500),
-@@ -2486,10 +2608,14 @@ class MockLaunchMonitor:
+@@ -2486,10 +2613,14 @@ class MockLaunchMonitor:
      # Launch angles in degrees (avg, std_dev) — drivers: low, wedges: high
      _CLUB_LAUNCH = {
          ClubType.DRIVER: (11.0, 2.0),
@@ -480,7 +482,7 @@ index 5ef4ce4..775091d 100644
          ClubType.HYBRID_5: (15.0, 2.0),
          ClubType.HYBRID_7: (16.5, 2.0),
          ClubType.HYBRID_9: (18.0, 2.5),
-@@ -2514,6 +2640,33 @@ class MockLaunchMonitor:
+@@ -2514,6 +2645,33 @@ class MockLaunchMonitor:
          self._running = False
          self._shot_callback = None
          self._current_club = ClubType.DRIVER
@@ -514,7 +516,28 @@ index 5ef4ce4..775091d 100644
  
      def connect(self):
          """Connect to mock radar (no-op)."""
-@@ -2566,6 +2719,23 @@ class MockLaunchMonitor:
+@@ -2541,6 +2699,9 @@ class MockLaunchMonitor:
+         launch_h: float = None,
+         spin_axis: float = None,
+         club: str = None,
++        club_speed: float = None,
++        club_aoa: float = None,
++        club_path: float = None,
+     ):
+         """Simulate a shot for testing using realistic TrackMan-based values.
+ 
+@@ -2556,7 +2717,9 @@ class MockLaunchMonitor:
+         it's independent of launch_h, which is just the initial aim/push-pull
+         direction.
+         """
+-        manual = any(v is not None for v in (spin_rpm, launch_v, launch_h, spin_axis))
++        manual = any(v is not None for v in (spin_rpm, launch_v, launch_h,
++                                             spin_axis, club_speed, club_aoa,
++                                             club_path))
+ 
+         if club is not None:
+             try:
+@@ -2566,11 +2729,29 @@ class MockLaunchMonitor:
  
          avg_speed, std_dev, smash = self._CLUB_BALL_SPEEDS.get(self._current_club, (120, 15, 1.35))
  
@@ -538,6 +561,44 @@ index 5ef4ce4..775091d 100644
          if ball_speed is None:
              ball_speed = max(50, min(200, random.gauss(avg_speed, std_dev)))
  
+-        smash_factor = smash + random.uniform(-0.03, 0.03)
+-        club_speed = ball_speed / smash_factor
++        if club_speed is None:
++            smash_factor = smash + random.uniform(-0.03, 0.03)
++            club_speed = ball_speed / smash_factor
+ 
+         # Generate spin
+         avg_spin, spin_std = self._CLUB_SPIN.get(self._current_club, (5000, 800))
+@@ -2585,8 +2766,18 @@ class MockLaunchMonitor:
+             launch_h = random.gauss(0, 2.0)
+         launch_confidence = 1.0 if manual else round(random.uniform(0.5, 0.95), 2)
+ 
+-        # Generate club angle of attack (negative for irons, near-zero for driver)
+-        club_aoa = round(random.gauss(-4.0, 2.5), 1)
++        # Club delivery: honor typed values; only FABRICATE for the mock's
++        # own random demo shots (typed custom shots used to get a random
++        # AoA/path displayed beside their real numbers -- a +3 AoA delivery
++        # once read -3.0 on the tile by pure chance).
++        if club_aoa is None:
++            club_aoa = round(random.gauss(-4.0, 2.5), 1)
++        else:
++            club_aoa = round(club_aoa, 1)
++        if club_path is None:
++            club_path = round(random.uniform(-5.0, 5.0), 1)
++        else:
++            club_path = round(club_path, 1)
+ 
+         shot = Shot(
+             ball_speed_mph=ball_speed,
+@@ -2604,7 +2795,7 @@ class MockLaunchMonitor:
+             launch_angle_horizontal_source="manual" if manual else "mock",
+             angle_source="manual" if manual else "mock",
+             club_angle_deg=club_aoa,
+-            club_path_deg=round(random.uniform(-5.0, 5.0), 1),
++            club_path_deg=club_path,
+             spin_axis_deg=round(spin_axis, 1) if spin_axis is not None
+             else round(launch_h - random.uniform(-5.0, 5.0), 1),
+             mode="mock",
 diff --git a/src/openflight/sim/resolver.py b/src/openflight/sim/resolver.py
 index c9426eb..4a3ea62 100644
 --- a/src/openflight/sim/resolver.py
@@ -639,10 +700,10 @@ index 0000000..248268f
 +        assert 5.0 <= t <= 8.0, f"{club}: hang time {t:.1f}s outside physical range"
 diff --git a/tests/test_server_dirt.py b/tests/test_server_dirt.py
 new file mode 100644
-index 0000000..9a6284d
+index 0000000..2898f3d
 --- /dev/null
 +++ b/tests/test_server_dirt.py
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,133 @@
 +"""Audit U-1 regressions: socket handlers must survive hostile payloads.
 +
 +The mock server is the surface the whole UI (and any third-party client)
@@ -735,6 +796,47 @@ index 0000000..9a6284d
 +    if shot.trajectory is not None:
 +        assert shot.trajectory["carry_yards"] >= 1.0
 +        assert shot.trajectory["apex_yards"] >= 0.0
++
++
++# --- Typed club delivery (AoA / path / club speed) passthrough ---
++# Before this, the mock FABRICATED AoA (gauss around -4) and path
++# (uniform +/-5) for every shot including typed custom shots: a "+3 AoA"
++# delivery once displayed a random -3.0 on the tile. Typed values must
++# round-trip exactly; garbage must fall back, clamped like everything else.
++
++def test_typed_club_delivery_round_trips(mock_monitor):
++    server_module.handle_simulate_custom_shot({
++        "ball_speed_mph": 172.0, "club_speed_mph": 116.2,
++        "club_angle_deg": 3.0, "club_path_deg": 3.0, "club": "driver",
++    })
++    s = mock_monitor.get_shots()[-1]
++    assert s.club_angle_deg == 3.0
++    assert s.club_path_deg == 3.0
++    assert abs(s.club_speed_mph - 116.2) < 0.01
++    assert abs(s.smash_factor - 1.48) < 0.005
++
++
++def test_garbage_club_delivery_falls_back(mock_monitor):
++    server_module.handle_simulate_custom_shot({
++        "ball_speed_mph": 150.0,
++        "club_angle_deg": float("nan"), "club_path_deg": "steep",
++        "club_speed_mph": None,
++    })
++    s = mock_monitor.get_shots()[-1]
++    assert s.club_angle_deg is not None and math.isfinite(s.club_angle_deg)
++    assert s.club_path_deg is not None and math.isfinite(s.club_path_deg)
++    assert s.club_speed_mph and s.club_speed_mph > 0
++
++
++def test_club_delivery_is_clamped(mock_monitor):
++    server_module.handle_simulate_custom_shot({
++        "ball_speed_mph": 150.0, "club_angle_deg": 50.0,
++        "club_path_deg": -50.0, "club_speed_mph": 500.0,
++    })
++    s = mock_monitor.get_shots()[-1]
++    assert s.club_angle_deg == 20.0
++    assert s.club_path_deg == -20.0
++    assert s.club_speed_mph == 150.0
 diff --git a/ui/index.html b/ui/index.html
 index 592716b..b378260 100644
 --- a/ui/index.html
@@ -4783,7 +4885,7 @@ index 048359e..9bdfefc 100644
    }
  }
 diff --git a/ui/src/components/DisplayMode.tsx b/ui/src/components/DisplayMode.tsx
-index 1516a9b..ef44ba9 100644
+index 1516a9b..8866e24 100644
 --- a/ui/src/components/DisplayMode.tsx
 +++ b/ui/src/components/DisplayMode.tsx
 @@ -2,8 +2,11 @@ import { useState } from 'react';
@@ -4793,7 +4895,7 @@ index 1516a9b..ef44ba9 100644
 -import { formatDistance, formatSpeed, getDistanceUnit, getSpeedUnit } from '../utils/units';
 +import { useHandednessPreference } from '../state/useHandednessPreference';
 +import type { Handedness } from '../stores/useHandednessPreferenceStore';
-+import { PEAK_HEIGHT_UNIT, formatDistance, formatPeakHeight, formatSpeed, getDistanceUnit, getSpeedUnit } from '../utils/units';
++import { formatClubPath, PEAK_HEIGHT_UNIT, formatDistance, formatPeakHeight, formatSpeed, getDistanceUnit, getSpeedUnit } from '../utils/units';
  import { getServerOrigin } from '../utils/serverOrigin';
 +import { rateTourStat, type TourComparison } from '../data/tourAverages';
  import './DisplayMode.css';
@@ -4827,7 +4929,7 @@ index 1516a9b..ef44ba9 100644
        { label: 'Spin', value: '--', unit: 'rpm' },
        { label: 'Club Path', value: '--', unit: 'deg' },
        { label: 'H. Launch', value: '--', unit: 'deg' },
-@@ -81,17 +96,29 @@ function buildMetrics(shot: Shot | null, unitSystem: 'imperial' | 'metric'): Dis
+@@ -81,18 +96,32 @@ function buildMetrics(shot: Shot | null, unitSystem: 'imperial' | 'metric'): Dis
        label: 'Launch',
        value: formatOptionalNumber(shot.launch_angle_vertical),
        unit: shot.launch_angle_vertical === null ? undefined : 'deg',
@@ -4851,16 +4953,20 @@ index 1516a9b..ef44ba9 100644
      {
        label: 'Club Path',
 -      value: formatOptionalNumber(shot.club_path_deg, 1, true),
-+      // Right-handed sign convention; mirrored for LH (same as the live view).
-+      value: formatOptionalNumber(
-+        shot.club_path_deg === null ? null : handedness === 'lh' ? -shot.club_path_deg : shot.club_path_deg,
-+        1,
-+        true,
-+      ),
-       unit: shot.club_path_deg === null ? undefined : 'deg',
+-      unit: shot.club_path_deg === null ? undefined : 'deg',
++      // GSPro-style letters, handedness-relative (same as the live view).
++      value:
++        shot.club_path_deg === null
++          ? formatOptionalNumber(null, 1, true)
++          : formatClubPath(shot.club_path_deg, handedness).value,
++      unit:
++        shot.club_path_deg === null
++          ? undefined
++          : `deg ${formatClubPath(shot.club_path_deg, handedness).dir ?? ''}`.trim(),
      },
      {
-@@ -118,7 +145,8 @@ function DisplayMetricCard({ metric, featured = false }: { metric: DisplayMetric
+       label: 'H. Launch',
+@@ -118,7 +147,8 @@ function DisplayMetricCard({ metric, featured = false }: { metric: DisplayMetric
  export function DisplayMode({ connected, cameraStatus, latestShot, shots }: DisplayModeProps) {
    const [failedCameraKey, setFailedCameraKey] = useState<string | null>(null);
    const { unitSystem } = useUnitPreference();
@@ -5749,10 +5855,10 @@ index df7c5ce..affc018 100644
  }
 diff --git a/ui/src/components/ShotDisplay.test.tsx b/ui/src/components/ShotDisplay.test.tsx
 new file mode 100644
-index 0000000..17c8b66
+index 0000000..5e99455
 --- /dev/null
 +++ b/ui/src/components/ShotDisplay.test.tsx
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,69 @@
 +import { renderToString } from 'react-dom/server';
 +import { describe, expect, it } from 'vitest';
 +import type { Shot } from '../types/shot';
@@ -5803,11 +5909,30 @@ index 0000000..17c8b66
 +    expect(html).not.toContain('Tee Range');
 +  });
 +});
++
++
++describe('Club Path GSPro-style letters on the tile (LH and RH)', () => {
++  it('RH: +3.0 physical path renders 3.0 I-O, no sign', () => {
++    const html = renderToString(<ShotDisplay shot={makeShot({ club_path_deg: 3.0 })} />);
++    expect(html).toContain('I-O');
++    expect(html).not.toContain('+3.0');
++  });
++  // LH tile rendering can't be pinned through renderToString (zustand's
++  // SSR path reads the store's INITIAL state, so setState never lands).
++  // The LH letter semantics are pinned in utils/units.test.ts
++  // (formatClubPath matrix), and the live-browser sweep presses the LH
++  // toggle against the real app.
++  it('RH: -2.5 physical path renders 2.5 O-I', () => {
++    const html = renderToString(<ShotDisplay shot={makeShot({ club_path_deg: -2.5 })} />);
++    expect(html).toContain('2.5');
++    expect(html).toContain('O-I');
++  });
++});
 diff --git a/ui/src/components/ShotDisplay.tsx b/ui/src/components/ShotDisplay.tsx
-index cd645e3..bedc69d 100644
+index cd645e3..ebbdce7 100644
 --- a/ui/src/components/ShotDisplay.tsx
 +++ b/ui/src/components/ShotDisplay.tsx
-@@ -1,7 +1,17 @@
+@@ -1,7 +1,18 @@
  import { useMemo } from 'react';
  import type { Shot } from '../types/shot';
  import { useUnitPreference } from '../state/useUnitPreference';
@@ -5816,6 +5941,7 @@ index cd645e3..bedc69d 100644
 +import {
 +  PEAK_HEIGHT_UNIT,
 +  formatCarryRange,
++  formatClubPath,
 +  formatDistance,
 +  formatPeakHeight,
 +  formatSpeed,
@@ -5826,7 +5952,7 @@ index cd645e3..bedc69d 100644
  import { ReorderableGrid, type GridItem } from './ReorderableGrid';
  import './ShotDisplay.css';
  
-@@ -10,20 +20,41 @@ interface ShotDisplayProps {
+@@ -10,20 +21,41 @@ interface ShotDisplayProps {
    animate?: boolean;
  }
  
@@ -5870,7 +5996,7 @@ index cd645e3..bedc69d 100644
  }) {
    return (
      <div className={`metric-card metric-card--${variant}`}>
-@@ -33,16 +64,7 @@ export function MetricCard({
+@@ -33,16 +65,7 @@ export function MetricCard({
        </div>
        <span className="metric-card__label">{label}</span>
        {subtext && <span className="metric-card__subtext">{subtext}</span>}
@@ -5888,7 +6014,7 @@ index cd645e3..bedc69d 100644
      </div>
    );
  }
-@@ -51,15 +73,9 @@ function formatSpinRpm(rpm: number): string {
+@@ -51,15 +74,9 @@ function formatSpinRpm(rpm: number): string {
    return rpm.toLocaleString('en-US', { maximumFractionDigits: 0 });
  }
  
@@ -5905,7 +6031,7 @@ index cd645e3..bedc69d 100644
    const carryRange = useMemo(() => {
      if (!shot) return null;
      return formatCarryRange(shot.carry_range, unitSystem);
-@@ -71,14 +87,10 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+@@ -71,14 +88,10 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
    if (!shot) {
      return (
        <div className="shot-display shot-display--empty">
@@ -5924,7 +6050,7 @@ index cd645e3..bedc69d 100644
            </div>
            <p className="shot-display__waiting-text">Ready for your shot</p>
            <p className="shot-display__waiting-hint">Position ball in front of radar</p>
-@@ -90,6 +102,28 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+@@ -90,6 +103,28 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
    const hasSpin = shot.spin_rpm !== null;
    const hasLaunchAngle = shot.launch_angle_vertical !== null;
  
@@ -5953,7 +6079,7 @@ index cd645e3..bedc69d 100644
    // Every metric — ball speed included — is now a uniform box in one
    // reflowing, drag-reorderable grid (no more special gauge column).
    const items: GridItem[] = [
-@@ -101,6 +135,8 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+@@ -101,6 +136,8 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
            unit={getSpeedUnit(unitSystem)}
            label="Ball Speed"
            variant="primary"
@@ -5962,7 +6088,7 @@ index cd645e3..bedc69d 100644
          />
        ),
      },
-@@ -113,6 +149,12 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+@@ -113,6 +150,12 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
            label="Est. Carry"
            subtext={carrySubtext}
            variant="primary"
@@ -5975,7 +6101,7 @@ index cd645e3..bedc69d 100644
          />
        ),
      },
-@@ -123,8 +165,22 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+@@ -123,8 +166,22 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
            value={shot.club_speed_mph ? formatSpeed(shot.club_speed_mph, unitSystem, 1) : '—'}
            unit={shot.club_speed_mph ? getSpeedUnit(unitSystem) : undefined}
            label="Club Speed"
@@ -5999,7 +6125,7 @@ index cd645e3..bedc69d 100644
          />
        ),
      },
-@@ -137,43 +193,96 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+@@ -137,43 +194,97 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
            label="V. Launch"
            subtext={hasLaunchAngle ? (shot.angle_source ?? undefined) : undefined}
            variant="secondary"
@@ -6047,16 +6173,18 @@ index cd645e3..bedc69d 100644
      });
    }
    if (shot.club_path_deg !== null) {
-+    // Same right-handed convention as spin axis (+ = in-to-out for RH);
-+    // the LH toggle mirrors the displayed sign.
-+    const displayedPath = handedness === 'lh' ? -shot.club_path_deg : shot.club_path_deg;
++    // GSPro-style direction letters (Johnny's spec): magnitude + I-O/O-I
++    // instead of a signed number. The letters are handedness-relative by
++    // construction, so LH/RH both read correctly with no sign mirroring.
++    const path = formatClubPath(shot.club_path_deg, handedness);
      items.push({
        id: 'club_path',
        content: (
          <MetricCard
 -          value={(shot.club_path_deg >= 0 ? '+' : '') + shot.club_path_deg.toFixed(1)}
-+          value={(displayedPath >= 0 ? '+' : '') + displayedPath.toFixed(1)}
-           unit="°"
+-          unit="°"
++          value={path.value}
++          unit={path.dir ? `° ${path.dir}` : '°'}
            label="Club Path"
 -          subtext="radar"
 +          subtext={angleSourceTag}
@@ -6102,7 +6230,7 @@ index cd645e3..bedc69d 100644
            variant="secondary"
          />
        ),
-@@ -189,7 +298,6 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+@@ -189,7 +300,6 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
            label="H. Launch"
            subtext={shot.angle_source ?? undefined}
            variant="secondary"
@@ -6110,7 +6238,7 @@ index cd645e3..bedc69d 100644
          />
        ),
      });
-@@ -203,7 +311,8 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+@@ -203,7 +313,8 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
          label="Spin Rate"
          subtext={hasSpin && shot.spin_source ? (shot.spin_source === 'calculated' ? 'estimated' : 'radar') : undefined}
          variant="spin"
@@ -6379,7 +6507,7 @@ index 42e8f1d..9d277b2 100644
    }
  }
 diff --git a/ui/src/components/ShotList.tsx b/ui/src/components/ShotList.tsx
-index e2dd911..ddeaf3b 100644
+index e2dd911..f1f8948 100644
 --- a/ui/src/components/ShotList.tsx
 +++ b/ui/src/components/ShotList.tsx
 @@ -1,8 +1,10 @@
@@ -6390,11 +6518,11 @@ index e2dd911..ddeaf3b 100644
 +import type { Handedness } from '../stores/useHandednessPreferenceStore';
  import type { UnitSystem } from '../utils/units';
 -import { formatDistance, formatSpeed, getDistanceUnit } from '../utils/units';
-+import { formatDistance, formatPeakHeight, formatSpeed, getDistanceUnit } from '../utils/units';
++import { formatClubPath, formatDistance, formatPeakHeight, formatSpeed, getDistanceUnit } from '../utils/units';
  import './ShotList.css';
  
  const SHOTS_PER_PAGE = 5;
-@@ -16,35 +18,61 @@ interface ShotRowProps {
+@@ -16,35 +18,63 @@ interface ShotRowProps {
    shotNumber: number;
    unitSystem: UnitSystem;
    distanceUnit: string;
@@ -6438,7 +6566,9 @@ index e2dd911..ddeaf3b 100644
 +    },
 +    { label: 'axis', value: isSwing ? '—' : fmt(flip(shot.spin_axis_deg), 1, { sign: true, suffix: '°' }) },
 +    { label: 'aoa', value: isSwing ? '—' : fmt(shot.club_angle_deg, 1, { suffix: '°' }) },
-+    { label: 'path', value: isSwing ? '—' : fmt(flip(shot.club_path_deg), 1, { sign: true, suffix: '°' }) },
++    { label: 'path', value: isSwing || shot.club_path_deg === null ? '—'
++        : (() => { const p = formatClubPath(shot.club_path_deg, handedness);
++                   return `${p.value}°${p.dir ? ` ${p.dir}` : ''}`; })() },
 +  ];
 +
    return (
@@ -6475,7 +6605,7 @@ index e2dd911..ddeaf3b 100644
          <span className="shot-row__label">{distanceUnit}</span>
        </span>
      </div>
-@@ -54,6 +82,7 @@ const ShotRow = memo(function ShotRow({ shot, shotNumber, unitSystem, distanceUn
+@@ -54,6 +84,7 @@ const ShotRow = memo(function ShotRow({ shot, shotNumber, unitSystem, distanceUn
  export function ShotList({ shots }: ShotListProps) {
    const [page, setPage] = useState(0);
    const { unitSystem } = useUnitPreference();
@@ -6483,7 +6613,7 @@ index e2dd911..ddeaf3b 100644
    const distanceUnit = getDistanceUnit(unitSystem);
  
    const totalPages = Math.ceil(shots.length / SHOTS_PER_PAGE);
-@@ -84,6 +113,7 @@ export function ShotList({ shots }: ShotListProps) {
+@@ -84,6 +115,7 @@ export function ShotList({ shots }: ShotListProps) {
              shotNumber={shots.length - startIndex - index}
              unitSystem={unitSystem}
              distanceUnit={distanceUnit}
@@ -8185,11 +8315,42 @@ index 0000000..d76090e
 +  }
 +  return d;
 +}
+diff --git a/ui/src/utils/units.test.ts b/ui/src/utils/units.test.ts
+index 0e012c9..73cc984 100644
+--- a/ui/src/utils/units.test.ts
++++ b/ui/src/utils/units.test.ts
+@@ -3,6 +3,7 @@ import {
+   convertDistanceFromYards,
+   convertSpeedFromMph,
+   formatCarryRange,
++  formatClubPath,
+   formatDistance,
+   formatSpeed,
+   getDistanceUnit,
+@@ -39,3 +40,18 @@ describe('units helpers', () => {
+     expect(formatCarryRange([200, 220], 'metric')).toBe('183-201 m');
+   });
+ });
++
++describe('formatClubPath (GSPro-style letters, handedness-relative)', () => {
++  it('RH: rightward path (+, TrackMan) is in-to-out', () => {
++    expect(formatClubPath(3.0, 'rh')).toEqual({ value: '3.0', dir: 'I-O' });
++    expect(formatClubPath(-2.5, 'rh')).toEqual({ value: '2.5', dir: 'O-I' });
++  });
++  it('LH: the SAME physical path reads with flipped letters', () => {
++    expect(formatClubPath(3.0, 'lh')).toEqual({ value: '3.0', dir: 'O-I' });
++    expect(formatClubPath(-2.5, 'lh')).toEqual({ value: '2.5', dir: 'I-O' });
++  });
++  it('dead square path gets no letters', () => {
++    expect(formatClubPath(0.0, 'rh')).toEqual({ value: '0.0', dir: null });
++    expect(formatClubPath(-0.04, 'lh')).toEqual({ value: '0.0', dir: null });
++  });
++});
 diff --git a/ui/src/utils/units.ts b/ui/src/utils/units.ts
-index 2af0476..e5189cd 100644
+index 2af0476..e289dbb 100644
 --- a/ui/src/utils/units.ts
 +++ b/ui/src/utils/units.ts
-@@ -44,3 +44,12 @@ export function formatCarryRange(carryRange: [number, number], unitSystem: UnitS
+@@ -44,3 +44,31 @@ export function formatCarryRange(carryRange: [number, number], unitSystem: UnitS
    const max = formatDistance(carryRange[1], unitSystem, 0);
    return `${min}-${max} ${getDistanceUnit(unitSystem)}`;
  }
@@ -8201,6 +8362,25 @@ index 2af0476..e5189cd 100644
 + * about ball flight in feet regardless of how they measure carry. */
 +export function formatPeakHeight(apexYards: number, digits = 0): string {
 +  return (apexYards * YARDS_TO_FEET).toFixed(digits);
++}
++
++/** GSPro-style club path: magnitude + direction letters instead of a
++ * signed number. The pipeline's sign is TrackMan's (+ = path pointing
++ * RIGHT of the target line); the letters are what that means for the
++ * golfer holding the club — for a right-hander a rightward path is
++ * in-to-out ("I-O"), for a left-hander the SAME physical path is
++ * out-to-in ("O-I"). Letters kill the sign-convention argument entirely:
++ * they read correctly for both handedness settings by construction.
++ * Dead-square paths (< 0.05°) get no letters. */
++export function formatClubPath(
++  pathDeg: number,
++  handedness: 'rh' | 'lh',
++): { value: string; dir: string | null } {
++  const value = Math.abs(pathDeg).toFixed(1);
++  if (Math.abs(pathDeg) < 0.05) return { value, dir: null };
++  const rightward = pathDeg > 0;
++  const inToOut = handedness === 'rh' ? rightward : !rightward;
++  return { value, dir: inToOut ? 'I-O' : 'O-I' };
 +}
 diff --git a/ui/tests/e2e/app.spec.ts b/ui/tests/e2e/app.spec.ts
 index 981b292..a639ba2 100644
