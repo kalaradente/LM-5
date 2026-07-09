@@ -248,19 +248,20 @@ Running list of open items. Newest relevant item first per section.
       by design (the mock never forms locks), pinned by
       ShotDisplay.test.tsx + a shot_to_dict round-trip check.
 
-- [ ] **Auto-start OpenFlight on Pi boot**: run_iwr6843.py should come up
-      by itself when the Pi powers on (walk up, swing, no SSH). Likely a
-      systemd unit installed by a new setup_wizard.sh step: After=
-      network.target + sound.target, WorkingDirectory=repo root, exec the
-      venv python with args from hardware.env, Restart=on-failure (pairs
-      with the S-1 dead-UART loud-exit and the D-6 ADC re-assert, which
-      was designed for exactly this power-cut-then-reboot path). Upstream's
-      scripts/start-kiosk.sh is prior art but launches a desktop kiosk
-      browser; ours is headless -- the UI is served by the same process
-      and viewed from a phone. Decide at build time whether the unit also
-      wants a --speed-training default or always starts in indoor play
-      mode (mode is live-switchable from the web UI either way). Needs the
-      real Pi to test enable/ordering/permissions -- hardware-gated.
+- [~] **Auto-start OpenFlight on Pi boot** — AUTHORED 2026-07-08 (wizard
+      step 9): `openflight-lm2.service` rendered + enabled by the wizard
+      (opt-out prompt). After=network.target sound.target,
+      WorkingDirectory=repo root, ExecStart=repo venv python
+      run_iwr6843.py --ballistics (ports/audio from hardware.env as
+      always), Restart=on-failure with backoff. Deliberate: the S-1
+      dead-UART guard keeps the web server alive (UI reachable, says
+      what happened) rather than flap-restarting the radar; unit starts
+      in indoor play mode — all modes live-switchable from the UI, so no
+      --speed-training default. Headless by design (upstream's
+      start-kiosk.sh launches a desktop browser; ours is viewed from a
+      phone). REMAINING (hardware-gated): boot-ordering vs the HiFiBerry
+      overlay + USB enumeration on the real Pi — enable, power-cycle,
+      swing.
 
 - [x] **Speed-training mode + live 3-way mode switching (2026-07-06,
       Johnny's request)**: club-head-speed-only mode for ball-less
@@ -477,10 +478,15 @@ Running list of open items. Newest relevant item first per section.
       the rung-3 drill-rig test).
 - [ ] **Short-game floor bench (rung 5)** — run `shortgame_probe.py --live
       --gate 4.5` when hardware lands: phase 1 idle false-trigger count,
-      phase 2 real chips vs detections. Synthetic answer (2026-07-07):
-      classifier floor ~14 mph ball (≈3.5 yd carry) at 83%, 17 mph at
-      100%; BLOCKER is chip-speed practice swings phantoming ~58% — needs
-      a chip-regime classifier pass before any short-game session mode
-      ships. Hard walls regardless: no measured spin <17 mph, chip angles
-      informational, no rollout model. Full list:
+      phase 2 real chips vs detections. Synthetic answer (2026-07-07,
+      updated 2026-07-08): classifier floor 17 mph ball (≈4.5 yd) at
+      100%, 14 mph at ~67-80%. The old BLOCKER (chip-speed practice
+      swings phantoming ~58% — and, measured during the fix, 22-35 mph
+      rehearsal swings phantoming 65-80% in ORDINARY play mode) is
+      CLOSED by the T-14 chip-regime decay gate (audit #9 addendum):
+      phantoms 0 at every probe gate, 1/220 residual across a 12-65 mph
+      swing scan. A short-game session mode is now unblocked software-
+      wise; what remains is the trigger-gate choice + these bench
+      numbers. Hard walls regardless: no measured spin <17 mph, chip
+      angles informational, no rollout model. Full list:
       openflight_iwr6843/docs/hardware-physics-limits.md.

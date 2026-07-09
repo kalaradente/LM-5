@@ -406,6 +406,20 @@ a fresh session must carry:
   Johnny's instruction (the copy verified first: 0 unpushed commits,
   nothing unique — all content tracked in LM-1 or superseded in LM-2).
   All 13 T-series findings are now closed.
+- **T-14 addendum (same session): the short-game phantom blocker is
+  CLOSED** — and it was bigger than advertised: 22–35 mph rehearsal
+  swings were phantoming 65–80% in ordinary PLAY mode (a band M-3's
+  70–125 mph scan never probed). The chip-regime decay gate in
+  `_pick_ball_track` (reject a sub-12 m/s suffix whose range-rate decays
+  ≥2 m/s at ≥1.6× — the follow-through's signature; direction-aware so
+  merge-scarred rising balls are never touched; algebraically cannot
+  fire in M-3's regime) measures 1/220 phantoms across 12–65 mph swings
+  at a cost of 6/1094 balls (0.5%, three of them one seed that was
+  publishing garbage anyway). Floor statement now: 17 mph = 100%,
+  14 mph ~67–80%. Full detail: audit log T-14 addendum.
+- Also authored same session: **systemd auto-start** (wizard step 9,
+  `openflight-lm2.service` — boot-order test is Pi-gated) and the
+  chip-instrumentation method notes live in the T-14 entry.
 
 ## 8. The bring-up ladder (the plan for when hardware arrives)
 

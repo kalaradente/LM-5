@@ -1019,6 +1019,34 @@ class IWR6843Source:
                     # decay) sit far inside the rail.
                     if hi >= 12.0 and hi > 1.25 * lo + 2.0:
                         continue
+                    # CHIP-REGIME DECAY GATE (audit #9 follow-on, T-14).
+                    # Below M-3's 12 m/s activation the rate-consistency
+                    # gate was inert, and slow ball-less swings sailed
+                    # through every fence: measured phantom rates on
+                    # TODAY's play-mode gate were 65-80% for 22-35 mph
+                    # rehearsal swings (a band M-3's 70-125 mph wide scan
+                    # never probed) and ~50% for chip-speed swings under
+                    # a lowered short-game gate. The signature is the
+                    # follow-through's exponential decay: every measured
+                    # phantom fell rate1 -> rate2 by >= 2.2 m/s at >= 1.7x
+                    # (487/487 across 6 speeds x 40 seeds x 4 placements),
+                    # while real chip/pitch balls run flat-to-RISING
+                    # (drag ~2%; merge-contaminated births rise; only the
+                    # slowest lofted chips decay at all, and never this
+                    # hard). DIRECTION-AWARE on purpose: sl1 > sl2 only --
+                    # a rising suffix is a merge-scarred real ball, never
+                    # rejected. Cost, measured and accepted: 6/1094 balls
+                    # (0.5%) -- three are ONE 30 mph seed whose winning
+                    # suffix was contaminated junk that TODAY publishes as
+                    # a 16.8 mph / 48 deg garbage shot (rejection is an
+                    # upgrade), the rest are 13-14 mph chips at the
+                    # documented ~83% floor. (An az_world>0 conjunct was
+                    # tried and measured WORSE: saves 2 balls, frees 18
+                    # phantoms on fit noise -- recorded so nobody
+                    # re-invents it.)
+                    if sl1 > sl2 and (sl1 - sl2) >= 2.0 \
+                            and sl1 >= 1.6 * sl2:
+                        continue
                 best = (gain, ti, st)
         return best
 

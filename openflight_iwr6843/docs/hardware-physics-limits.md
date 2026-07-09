@@ -127,15 +127,20 @@ achievable with this architecture and there is no reason to want it.
 **Putting: out of scope.** Below the Doppler separability floor, no spin
 channel, no rollout model — three independent walls.
 
-**Short game (the 2-yd chip question, probed 2026-07-07):**
-today's realistic floor is **~14 mph ball ≈ 3.5 yd carry at ~83%
-reliability** (17 mph / ~4.5 yd at 100%), speed-only quality (angles
-informational, spin fallback). Below that: 12 mph is a coin flip, 8 mph
-invisible. Pushing the trigger to catch chip clubheads means gate ≈
-4.0–4.5 m/s AND a chip-regime classifier pass first — ball-less
-chip-speed practice swings currently phantom ~58% in synthetic dirt
-(full-speed swings reject fine). `shortgame_probe.py --live` is the
-bench-day script that turns these synthetic numbers into real ones.
+**Short game (the 2-yd chip question, probed 2026-07-07; classifier
+blocker lifted 2026-07-08):** today's realistic floor is **17 mph ball ≈
+4.5 yd carry at 100%** (14 mph / ~3.5 yd at ~67–80% — the T-14 gate
+trades a few marginal sub-floor chips, 0.5% of the 13–30 mph population,
+for phantom immunity), speed-only quality (angles informational, spin
+fallback). Below that: 12 mph is a coin flip, 8 mph invisible. The old
+blocker — ball-less slow swings phantoming ~58% at chip speed and, it
+turned out, 65–80% at 22–35 mph in ordinary play mode — is closed by the
+chip-regime decay gate (audit #9 T-14: a sub-12 m/s suffix whose
+range-rate decays ≥2 m/s at ≥1.6× is a follow-through, not a ball;
+measured 1/220 residual across 12–65 mph swings). Enabling a short-game
+mode now needs only the trigger-gate choice (≈4.0–4.5 m/s to self-arm on
+chip clubheads) and the rung-3/5 bench numbers;
+`shortgame_probe.py --live` is the bench-day script.
 
 ---
 

@@ -80,6 +80,48 @@ mean-of-empty-slice RuntimeWarnings (upstream's own K-LD7 stack).
 act with full re-verification); patch verification only against a fresh
 GitHub clone; probes that catch real defects graduate into simulators.
 
+### Same-session addendum: T-14 — chip-regime decay gate (the short-game blocker, closed)
+
+Johnny's brief: "tackle the larger ones" — the declared blocker was
+ball-less chip-speed practice swings phantoming ~58% under a lowered
+short-game gate. Instrumentation first (feature distributions of 487
+phantom winners vs 1094 real chip/pitch-ball winners, 40 seeds × 6
+swing speeds × 7 ball speeds × 4 placements), and the measurement
+**enlarged the finding**: the phantom hole was never chip-only.
+**22–35 mph rehearsal swings phantom at 65–80% in ORDINARY play mode
+today** (they cross the 7.6 m/s trigger gate; M-3's wide scan started at
+70 mph and never probed this band). One measured seed published a bare
+35 mph rehearsal as a 24.9 mph shot at confidence 0.73.
+
+The discriminator is the follow-through's own physics: every phantom's
+winning suffix DECAYS (first-third range-rate → last-third fell ≥2.2 m/s
+at ≥1.7× — the e^{-kt} follow-through; 487/487), while real chip/pitch
+balls run flat-to-RISING (drag is ~2%; merge-scarred births rise; only
+the slowest lofted chips decay at all, never that hard). The gate, in
+`_pick_ball_track` right under M-3's rail: **reject a suffix whose
+range-rate decays ≥2.0 m/s at ≥1.6× — direction-aware (rising suffixes
+are never rejected) and algebraically confined below M-3's 12 m/s
+activation** (the two conditions cannot intersect above sl1≈9.1 m/s, so
+the gates tile with no explicit scope and no gap). An az_world>0
+conjunct was tried and measured WORSE (saves 2 balls, frees 18 phantoms
+on fit noise) — recorded so nobody re-invents it.
+
+Measured, post-gate: **swing phantoms 1/220 across 12–65 mph** (was
+~110/220 over the dirty band; the survivor is one 35 mph M-3-boundary
+seed — sl1 13.6 misses M-3's line by 0.17 and the anti-gravity gate by
+fit variance — documented, not chased, per the V-7/M-8 rule); original
+chip population 0/80; `shortgame_probe` phantoms 0/12 at every gate.
+Cost: **6/1094 balls (0.5%)** — three are ONE 30 mph seed whose winner
+was contaminated junk that pre-gate code published as a 16.8 mph / 48°
+garbage shot (rejection is an upgrade; verified against HEAD's code
+side-by-side), the rest are 13–14 mph chips at the documented floor
+(14 mph now ~67–80%, floor statement moved to 17 mph = 100%).
+Chip-to-pitch acceptance otherwise untouched (17–45 mph at 19–20/20,
+worst speed error 1.3 mph; the single 40 mph miss reproduced on
+pre-gate HEAD code — pre-existing merge class). Full standing sweep,
+battery, selftest all green. Short-game mode is now unblocked
+software-side; `shortgame_probe.py --live` remains the bench-day truth.
+
 ---
 
 ## Audit #8 — 2026-07-07 (U-series: web-UI redesign + flight physics + ball tracer, hostile-dirt audit)

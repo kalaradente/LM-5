@@ -131,21 +131,26 @@ def synthetic_sweep() -> None:
               f"floor {floor if floor is not None else '—'} mph{carry}, "
               f"phantoms {phantoms}/{n}")
     print("""
-READ THE TABLE HONESTLY (synthetic findings, 2026-07-07):
+READ THE TABLE HONESTLY (synthetic findings, 2026-07-07; blocker lifted
+2026-07-08 by the T-14 chip-regime decay gate — see audit-log.md):
 - The gate column barely changes anything because the simulator's CFAR
   false alarms (random Doppler) arm the capture at ANY gate — synthetic
   trigger rates are noise-dominated. The real trigger story is kinematic:
   a chip's CLUB (~ball/1.12) must cross the gate itself, so reliable
   self-arming for a 10-14 mph chip needs gate ≈ 4.0-4.5 m/s (9-10 mph).
-- The classifier floor is the real limit: analyze() reads 14 mph balls at
-  ~83% and 17 mph at 100% under full dirt (speed error ≤1.6 mph); 12 mph
-  is a coin flip; 8 mph is invisible (inside Doppler-bin clutter).
-- BLOCKER before enabling any short-game mode: ball-less CHIP-SPEED
-  practice swings phantom ~58% here — the ballistic-suffix classifier
-  was tuned for full swings and a slow gentle arc fools it. Full-speed
-  practice swings still reject fine (main sim suite). A short-game mode
-  needs a chip-regime classifier pass; quantify on real hardware with
-  --live before trusting any of this.
+- The classifier floor is the real limit: analyze() reads 17 mph balls at
+  100% under full dirt (speed error ≤1.6 mph); 14 mph is ~67-80% (the
+  T-14 gate deliberately trades a few marginal sub-floor chips — 0.5%
+  of the full 13-30 mph ball population — for phantom immunity); 12 mph
+  a coin flip; 8 mph invisible (inside Doppler-bin clutter).
+- The old BLOCKER is closed: ball-less slow swings used to phantom ~58%
+  at chip speed here AND 65-80% at 22-35 mph in ORDINARY play mode (a
+  band the M-3 wide scan never covered). The T-14 decay gate — reject a
+  sub-12 m/s suffix whose range-rate DECAYS ≥2 m/s at ≥1.6x (the
+  follow-through's e^{-kt} signature; real chips run flat-to-rising) —
+  measures 0 phantoms at every gate here and 1/220 across a 12-65 mph
+  swing scan (one 35 mph M-3-boundary seed, documented not chased).
+  --live on real hardware (this script) is still the number that counts.
 Hard physics regardless of gate: no measured spin below 17 mph (K-MC1
 carrier band), chip launch angles scatter low (−3.6±3.8°, informational
 only — see the audit-log V-7 residual table), Doppler bin ≈ 5.3 mph, no
