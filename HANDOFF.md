@@ -421,6 +421,25 @@ a fresh session must carry:
   `openflight-lm2.service` — boot-order test is Pi-gated) and the
   chip-instrumentation method notes live in the T-14 entry.
 
+## 7d. Audit #10 (A-series, 2026-07-09) — post-publish sanity check
+
+After the LM-2 + LM-5 push, a full dirt pass over everything shipped
+since audit #9 (typed club delivery, GSPro path letters, tee_range_m,
+chip-regime gate, delete/save/simulate-relocate, systemd unit). Two
+findings, both fixed and re-verified; everything else verified good.
+- **A10-2 (MED)**: the MOCK's `get_session_stats` counted speed-training
+  swings as ball shots (swing's 0.0 mph poisoned min/avg, inflated
+  shot_count) — the M-1/M-6 bug the hardware monitor already fixes, never
+  ported to the mock when ui_redesign taught it speed mode. Narrow blast
+  radius (the Stats tab self-computes client-side, so it was visually
+  fine), but the server `get_session_stats` socket API was wrong. Fixed
+  to parity + 2 tests.
+- **A10-1 (LOW)**: Save Session CSV exported `carry_yards=0` for swings
+  instead of blank. Fixed.
+- Verified good: delivery clamps/NaN rails, GSPro letters both handedness,
+  delete garbage-inert + stats recompute + page clamp, chip gate 1/220
+  unchanged, Save-is-the-only-persistence. Full detail: audit-log #10.
+
 ## 8. The bring-up ladder (the plan for when hardware arrives)
 
 0. Flash IWR6843 firmware on **Windows** via Uniflash (see

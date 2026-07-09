@@ -226,7 +226,7 @@ index 4630ae0..53aa083 100644
      @property
      def ball_speed_ms(self) -> float:
 diff --git a/src/openflight/server.py b/src/openflight/server.py
-index 5ef4ce4..e75ffa7 100644
+index 5ef4ce4..60ad622 100644
 --- a/src/openflight/server.py
 +++ b/src/openflight/server.py
 @@ -6,6 +6,7 @@ Provides real-time shot data to the web frontend via Flask-SocketIO.
@@ -624,7 +624,83 @@ index 5ef4ce4..e75ffa7 100644
              spin_axis_deg=round(spin_axis, 1) if spin_axis is not None
              else round(launch_h - random.uniform(-5.0, 5.0), 1),
              mode="mock",
-@@ -2662,6 +2871,13 @@ class MockLaunchMonitor:
+@@ -2631,37 +2840,64 @@ class MockLaunchMonitor:
+         return self._shots.copy()
+ 
+     def get_session_stats(self) -> dict:
+-        """Get session statistics."""
+-        if not self._shots:
+-            return {
+-                "shot_count": 0,
+-                "avg_ball_speed": 0,
+-                "max_ball_speed": 0,
+-                "min_ball_speed": 0,
+-                "avg_club_speed": None,
+-                "avg_smash_factor": None,
+-                "avg_carry_est": 0,
+-            }
+-
+-        ball_speeds = [s.ball_speed_mph for s in self._shots]
+-        club_speeds = [s.club_speed_mph for s in self._shots if s.club_speed_mph]
+-        smash_factors = [s.smash_factor for s in self._shots if s.smash_factor]
+-
+-        return {
+-            "shot_count": len(self._shots),
+-            "avg_ball_speed": statistics.mean(ball_speeds),
+-            "max_ball_speed": max(ball_speeds),
+-            "min_ball_speed": min(ball_speeds),
+-            "std_dev": statistics.stdev(ball_speeds) if len(ball_speeds) > 1 else 0,
+-            "avg_club_speed": statistics.mean(club_speeds) if club_speeds else None,
+-            "avg_smash_factor": statistics.mean(smash_factors) if smash_factors else None,
+-            "avg_carry_est": statistics.mean([s.estimated_carry_yards for s in self._shots]),
++        """Get session statistics.
++
++        Speed-training SWINGS are kept OUT of the ball aggregates (LM-2
++        audit #10 / A10-2 — brought to parity with IWR6843Monitor's own
++        get_session_stats, audit M-1/M-6): a swing's ball_speed is a
++        structural 0.0, so counting it craters min/avg ball speed and
++        inflates shot_count. This surfaced once the ui_redesign patch
++        taught the MOCK live speed mode + per-row delete (a mixed session
++        left swing-only after deleting the ball shots read shot_count 1
++        against a lone swing). Swings get their own club-speed aggregates.
++        """
++        shots = [s for s in self._shots if s.mode != "speed-training"]
++        swings = [s for s in self._shots if s.mode == "speed-training"]
++
++        stats = {
++            "shot_count": 0,
++            "avg_ball_speed": 0,
++            "max_ball_speed": 0,
++            "min_ball_speed": 0,
++            "avg_club_speed": None,
++            "avg_smash_factor": None,
++            "avg_carry_est": 0,
+         }
++        if shots:
++            ball_speeds = [s.ball_speed_mph for s in shots]
++            club_speeds = [s.club_speed_mph for s in shots if s.club_speed_mph]
++            smash_factors = [s.smash_factor for s in shots if s.smash_factor]
++            stats.update(
++                shot_count=len(shots),
++                avg_ball_speed=statistics.mean(ball_speeds),
++                max_ball_speed=max(ball_speeds),
++                min_ball_speed=min(ball_speeds),
++                std_dev=statistics.stdev(ball_speeds) if len(ball_speeds) > 1 else 0,
++                avg_club_speed=statistics.mean(club_speeds) if club_speeds else None,
++                avg_smash_factor=statistics.mean(smash_factors) if smash_factors else None,
++                avg_carry_est=statistics.mean([s.estimated_carry_yards for s in shots]),
++            )
++        if swings:
++            swing_speeds = [s.club_speed_mph for s in swings if s.club_speed_mph]
++            if swing_speeds:
++                stats.update(
++                    swing_count=len(swing_speeds),
++                    max_swing_speed=max(swing_speeds),
++                    avg_swing_speed=statistics.mean(swing_speeds),
++                )
++        return stats
+ 
+     def clear_session(self):
          """Clear all recorded shots."""
          self._shots = []
  
@@ -739,10 +815,10 @@ index 0000000..248268f
 +        assert 5.0 <= t <= 8.0, f"{club}: hang time {t:.1f}s outside physical range"
 diff --git a/tests/test_server_dirt.py b/tests/test_server_dirt.py
 new file mode 100644
-index 0000000..89ef476
+index 0000000..7a5a840
 --- /dev/null
 +++ b/tests/test_server_dirt.py
-@@ -0,0 +1,162 @@
+@@ -0,0 +1,188 @@
 +"""Audit U-1 regressions: socket handlers must survive hostile payloads.
 +
 +The mock server is the surface the whole UI (and any third-party client)
@@ -905,6 +981,32 @@ index 0000000..89ef476
 +    server_module.handle_simulate_custom_shot({"ball_speed_mph": 150.0})
 +    server_module.handle_delete_shot({"timestamp": "2001-01-01T00:00:00"})
 +    assert len(mock_monitor.get_shots()) == 1
++
++
++# --- A10-2: mock get_session_stats must exclude speed-training swings ---
++# The ui_redesign patch taught the MOCK live speed mode + per-row delete;
++# a swing's structural 0.0 mph used to crater min/avg ball speed and count
++# as a shot. Parity with IWR6843Monitor.get_session_stats (audit M-1/M-6).
++
++def test_stats_exclude_swings_from_ball_aggregates(mock_monitor):
++    mock_monitor.set_session_mode("speed")
++    server_module.handle_simulate_shot()          # a swing
++    mock_monitor.set_session_mode("indoor")
++    server_module.handle_simulate_custom_shot({"ball_speed_mph": 150.0})
++    st = mock_monitor.get_session_stats()
++    assert st["shot_count"] == 1                    # the ball shot only
++    assert st["min_ball_speed"] == 150.0            # NOT 0.0 from the swing
++    assert st["avg_ball_speed"] == 150.0
++    assert st.get("swing_count") == 1               # swing gets its own bucket
++
++
++def test_stats_swing_only_session_reads_zero_shots(mock_monitor):
++    mock_monitor.set_session_mode("speed")
++    server_module.handle_simulate_shot()
++    st = mock_monitor.get_session_stats()
++    assert st["shot_count"] == 0                    # was 1 before A10-2
++    assert st["max_ball_speed"] == 0
++    assert st.get("swing_count") == 1
 diff --git a/ui/index.html b/ui/index.html
 index 592716b..b378260 100644
 --- a/ui/index.html
@@ -8439,10 +8541,10 @@ index 7d347ff..4468d52 100644
  
 diff --git a/ui/src/utils/sessionExport.test.ts b/ui/src/utils/sessionExport.test.ts
 new file mode 100644
-index 0000000..3e26b7d
+index 0000000..5419374
 --- /dev/null
 +++ b/ui/src/utils/sessionExport.test.ts
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,60 @@
 +import { describe, expect, it } from 'vitest';
 +import type { Shot } from '../types/shot';
 +import { sessionFilename, sessionToCsv } from './sessionExport';
@@ -8484,11 +8586,14 @@ index 0000000..3e26b7d
 +    expect(row).toContain('264.6');    // spin-adjusted carry preferred
 +  });
 +
-+  it('dashes ball columns for speed-training swings via empty cells', () => {
-+    const csv = sessionToCsv([shot({ mode: 'speed-training', ball_speed_mph: 0 })]);
-+    const row = csv.trim().split('\n')[1];
-+    expect(row.split(',')[1]).toBe('speed-training');
-+    expect(row.split(',')[3]).toBe(''); // ball speed empty, not a fake 0
++  it('dashes ball columns AND carry for speed-training swings (A10-1)', () => {
++    const csv = sessionToCsv([shot({ mode: 'speed-training', ball_speed_mph: 0, estimated_carry_yards: 0 })]);
++    const cols = csv.trim().split('\n')[0].split(',');
++    const row = csv.trim().split('\n')[1].split(',');
++    const at = (h: string) => row[cols.indexOf(h)];
++    expect(at('mode')).toBe('speed-training');
++    expect(at('ball_speed_mph')).toBe('');   // not a fake 0
++    expect(at('carry_yards')).toBe('');       // A10-1: swings have no carry
 +  });
 +
 +  it('escapes cells containing commas/quotes', () => {
@@ -8502,10 +8607,10 @@ index 0000000..3e26b7d
 +});
 diff --git a/ui/src/utils/sessionExport.ts b/ui/src/utils/sessionExport.ts
 new file mode 100644
-index 0000000..f0d6488
+index 0000000..33ee85d
 --- /dev/null
 +++ b/ui/src/utils/sessionExport.ts
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,54 @@
 +/* Explicit session save (Johnny's spec): nothing is exported unless the
 +   user presses Save Session. Produces a CSV of the ledger in RAW physical
 +   units and TrackMan sign conventions (a saved log is data for later
@@ -8526,7 +8631,9 @@ index 0000000..f0d6488
 +  { header: 'spin_axis_deg', value: (s) => s.spin_axis_deg },
 +  { header: 'club_aoa_deg', value: (s) => s.club_angle_deg },
 +  { header: 'club_path_deg', value: (s) => s.club_path_deg },
-+  { header: 'carry_yards', value: (s) => s.carry_spin_adjusted ?? s.estimated_carry_yards },
++  // A speed-training swing has no ball flight: blank carry, not the
++  // structural estimated_carry_yards(0 mph) = 0 the server sends (A10-1).
++  { header: 'carry_yards', value: (s) => (s.mode === 'speed-training' ? null : s.carry_spin_adjusted ?? s.estimated_carry_yards) },
 +  { header: 'apex_ft', value: (s) => (s.trajectory ? Math.round(s.trajectory.apex_yards * 3) : null) },
 +  { header: 'lateral_yards', value: (s) => s.trajectory?.lateral_yards ?? null },
 +  { header: 'tee_range_m', value: (s) => s.tee_range_m ?? null },

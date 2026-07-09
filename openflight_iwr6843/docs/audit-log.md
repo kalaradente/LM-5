@@ -17,6 +17,73 @@ flight engine lives at `~/Desktop/datasheets/pgatourstats/`.
 
 ---
 
+## Audit #10 — 2026-07-09 (A-series: post-publish sanity check of the shipped version)
+
+Johnny's brief after the LM-2 + LM-5 push: "another topdown audit of our
+new version. complete sanity check." Scope: everything shipped since
+audit #9 that had NOT been through a dirt pass — typed club delivery
+passthrough, GSPro-style club-path letters, `tee_range_m` surfacing, the
+chip-regime decay gate (T-14), per-row delete, explicit Save Session, the
+Simulate-button relocation, and the systemd auto-start unit. Method: read
+the new code cold, throw hostile payloads at every new socket/UI surface
+with liveness between, re-verify the whole standing state didn't regress,
+and live-press the interactions in a real browser. Findings reproduced
+before claimed, fixes re-verified.
+
+| ID | Sev | Status | Finding |
+|---|---|---|---|
+| A10-2 | **MED — FIXED** | **The MOCK's `get_session_stats` counted speed-training swings as ball shots.** The `ui_redesign` patch taught the mock live speed mode + per-row delete, but its stats method still ran over ALL `self._shots` — so a swing's structural 0.0 mph craters min/avg ball speed and inflates `shot_count`, with no swing aggregates. Reproduced: a mixed session left swing-only after deleting the ball shots read `shot_count 1` against a lone swing (and `min_ball_speed 0.0` in any mixed session). This is exactly the M-1/M-6 bug the LM-2 **hardware** monitor (`IWR6843Monitor.get_session_stats`) already fixes — the mock was never brought to parity. Blast radius is narrow TODAY (the Stats tab UI self-computes client-side and filters swings, so it's visually correct — which is why audit #8 missed it), but the server's `get_session_stats` is a public socket API (`get_session` returns wrong stats to any third-party client) and a latent trap. Fixed to parity: swings excluded from ball aggregates, own club-speed bucket added. Pinned by two `test_server_dirt.py` regressions. |
+| A10-1 | LOW — FIXED | Speed-training swings exported `carry_yards = 0` in the Save Session CSV (from the server's structural `estimated_carry_yards(0 mph) = 0`) instead of blank like the other ball columns. A swing has no carry; the cell is now empty. Pinned by `sessionExport.test.ts`. |
+
+**Verified good under dirt (no change needed):**
+- **Typed club delivery** (T-round): NaN/Inf on the new `club_speed_mph`/
+  `club_angle_deg`/`club_path_deg` fields falls back finite; club speed 0
+  clamps to 10; AoA/path clamp to ±20; typed smash stays exact
+  (172.0/116.2 → 1.48). No non-finite reaches a tile.
+- **Per-row delete**: garbage payloads (non-dict, missing/empty/int
+  timestamp, unknown key) are inert, never raise; deleting the max-ball
+  shot recomputes `max_ball_speed` DOWN; delete-to-empty returns the
+  zero-stats dict; delete a swing works; delete then re-add keeps identity
+  clean; the ledger page index clamps so deleting the last row of the last
+  page can't strand the view. Server rebroadcasts `session_state` so every
+  client resyncs.
+- **GSPro-style path letters**: the same +3.0 physical path reads `I-O`
+  under RH and `O-I` under LH on the running app (handedness-relative by
+  construction); boundary at exactly 0.05°, negative-zero, and ±45°
+  format cleanly; dead-square gets no letters.
+- **Chip-regime decay gate (T-14)**: re-measured — swing phantoms 1/220
+  across 12–65 mph (unchanged), real chip/pitch acceptance 19–20/20 at
+  17–35 mph. No regression.
+- **Save Session**: only path by which a session leaves the browser
+  (in-memory session otherwise; nothing persists across refresh); CSV is
+  raw physical units + TrackMan signs, swing rows dashed, cells escaped,
+  filename sortable.
+- **Live-press, mixed 3-shot + 2-swing session**: Stats reads Shots 3 /
+  Avg Ball 128.3 / Max 167.0 and a separate Swings 2 / 62.6 mph bucket
+  (A10-2 fix visible), delete drops the count, Save reflects the session,
+  Simulate is gone from the Live face, browser console + server log noise
+  zero throughout.
+
+**Observations recorded, not fixed (by design or pre-existing):**
+- `_shots` is mutated by the acquisition thread (append) and the socket
+  thread (delete/clear); a delete racing a live shot arrival could drop
+  that shot from the SESSION (never from `captures/` — the .npz is still
+  written). Same threading class as the pre-existing `clear_session`;
+  hardware-only, benign (worst case a just-arrived shot shows one trigger
+  late). A monitor-wide lock is the fix if it ever matters.
+- Delete identity is the shot's `datetime.now()` isoformat timestamp
+  (upstream's existing shot identity + React key). Two shots sharing a
+  microsecond would collide; unreachable from a human swing or a network
+  client.
+- `formatClubPath` / the path tile guard `!== null` but not `undefined`;
+  the server contract always includes `club_path_deg`, so unreachable.
+
+**Suites after fixes:** 945 Python (+2 A10) + 57 UI + 6 Playwright e2e
+green; geometry sweep 0 failures; dirt battery 15/15; selftest PASS;
+patch bit-identity re-proven on a virgin pinned clone; drift check green.
+
+---
+
 ## Audit #9 — 2026-07-07/08 (T-series: top-down full-system dirt audit)
 
 Johnny's brief: "run a topdown audit now. with dirt. no stone left
