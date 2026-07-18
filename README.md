@@ -1,15 +1,21 @@
-# LM-2
+# LM-5
 
-DIY golf launch monitor: TI IWR6843ISK (geometry) + RFbeam K-MC1 (spin) on a
-Raspberry Pi, targeting the [OpenFlight](https://github.com/jewbetcha/openflight)
-server/physics/UI stack.
+**LM** — a DIY golf launch monitor: TI IWR6843ISK (geometry) + RFbeam K-MC1
+(spin) on a Raspberry Pi, targeting the
+[OpenFlight](https://github.com/jewbetcha/openflight) server/physics/UI stack.
 
-LM-2 merges two lines of work: the acquisition-layer signal processing
+Naming: the project is **LM**; the `-x` suffix is the version. This repo is
+the current version, **LM-5**. Earlier versions:
+[LM-2](https://github.com/kalaradente/LM-2) (the development line this
+version grew from — same tree, kept as the working mirror) and
+[LM-1](https://github.com/kalaradente/LM-1) (the frozen integration-only
+snapshot).
+
+LM merges two lines of work: the acquisition-layer signal processing
 (spin decoder with mains-hum cleanup, GSPro adapter, synthetic-capture
 self-tests) and the OpenFlight integration/tooling (live physics simulator,
 hardware runner, one-command setup wizard, ALSA gain control, firmware-flashing
-docs). See [LM-1](https://github.com/kalaradente/LM-1) for the earlier
-integration-only snapshot.
+docs).
 
 ## Layout
 
@@ -32,7 +38,7 @@ integration-only snapshot.
 **On the Pi, from a fresh clone — one command:**
 
 ```bash
-git clone https://github.com/kalaradente/LM-2.git && cd LM-2
+git clone https://github.com/kalaradente/LM-5.git && cd LM-5
 ./scripts/setup_wizard.sh
 ```
 

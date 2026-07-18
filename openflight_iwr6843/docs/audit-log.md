@@ -1,5 +1,15 @@
 # Pipeline audit log
 
+**Nomenclature key (2026-07-17):** the project is **LM**; the `-x`
+suffix is the version. Current version **LM-5**
+(github.com/kalaradente/LM-5); **LM-2** is the bit-identical development
+mirror the work happens in (`~/Desktop/LM-2`, remotes origin=LM-2 +
+lm5=LM-5); **LM-1** is the frozen integration snapshot. Historical
+entries below keep whatever name was accurate when they were written —
+this log is a record, not a living doc; do not rewrite old prose. The
+systemd unit was renamed version-agnostic (`openflight-lm2.service` →
+`openflight-lm.service`) in the same pass.
+
 Running log of top-down system audits. One entry per audit, newest first.
 Each audit walks **five stages per radar channel** (the "air/spark/fuel"
 framework): **physical input → trigger mechanism → processing → output →
@@ -7,13 +17,113 @@ upstream**. Findings get IDs (`F-n` for the 2026-07-04 code audit, `D-n`
 for datasheet-driven findings, `V-n` for the 2026-07-05/06 Visualizer/SDK
 User Guide chip-config audit, `M-n` for the speed-training/mode surface,
 `U-n` for the web-UI redesign + flight-physics + tracer surface, `T-n`
-for the 2026-07-07/08 top-down full-system dirt audit) and carry
+for the 2026-07-07/08 top-down full-system dirt audit, `A10-n`/`A11-n`
+for the 2026-07-09 and 2026-07-16/17 full-system audits) and carry
 forward between entries until closed — an audit isn't just what's newly
 broken, it's the standing state of everything found so far.
 
 Primary sources live at `~/Desktop/datasheets/` — see
 `datasheets-manifest.md` in this folder. PGA Tour ground-truth for the
 flight engine lives at `~/Desktop/datasheets/pgatourstats/`.
+
+---
+
+## Audit #11 — 2026-07-16/17 (full top-down: code+logic sanity, battery, every-button runthrough)
+
+Johnny's brief: "full audit. top down. first check code AND check logic
+(sanity), then check user runthrough, push every button a user is allowed
+to." Method: fresh-eyes read of every LM Python file plus both chirp
+cfgs with the RF math re-derived from scratch (R_max, IF/beat, duty,
+v_max_ext, gate-tiling algebra of the V-7/M-3/T-14 fence stack — all
+close), the wizard and patched server surface re-read, the full
+verification battery, then a live every-button press of the built bundle
+on the mock server. Findings fixed same-session and re-verified.
+
+| ID | Sev | Status | Finding |
+|---|---|---|---|
+| A11-1 | **MED — FIXED** | **`golf-outdoor.cfg` still carried `clutterRemoval -1 1` (ON), contradicting V-6.** The file was created pre-V-6 (0feb2ec) and the V-6 commit flipped only golf.cfg's line + `session.clutter_removal`. Masked at runtime (`_apply_session` rewrites the line from the session, which is False both environments), so nothing wrong ever reached the chip through run_iwr6843.py — but anyone streaming the file RAW (bring-up rung 3's "load the cfg", the Demo Visualizer, a hand CLI session) got clutter removal ON outdoors, where the fold-to-zero dead band sits at ~124 mph radial — the exact invisible-miss failure V-6 measured 8/8. Also a doc contradiction: HANDOFF/audit-log stated OFF in both files. Fixed: line now `-1 0` with a comment pointing at golf.cfg's V-6 block. Wire-identical before/after via the rewrite; the fix protects raw-streaming humans. |
+| A11-2 | LOW — FIXED | F-7 design comment in iwr6843_source.py said club speed reads "the 50 ms before the ball is born"; the audited candidate window has always been 30 ms (`t_birth - 0.03`). Comment corrected — prose drift only. |
+| A11-3 | ADVISORY — open (scheduled work, not a defect) | **Upstream HEAD drifted to f51a546**; the stack applies clean at the pin but `session_mode.patch` + `ui_redesign.patch` fail at HEAD (the T-3 early warning working as designed). No Pi urgency (wizard clones the pin). Standing rule applies: rebase the stack, re-run every suite on the new base, bit-identity-prove the regenerated ui_redesign.patch, THEN bump `UPSTREAM_COMMIT` — a deliberate separate work item, not a bring-up-day scramble. |
+
+**Battery (all green):** py_compile; selftest PASS (~3000 rpm); spin sim
+165/2600 +3.3%; geometry scenarios all PASS; sweep 0 failures; dirt
+battery 15/15; wizard `bash -n`; shot_simulator sane (248 yd / 6.64 s);
+patch stack applies at the pin; **945 Python + 57 UI + 6 Playwright**
+(counts identical to audit #10), tsc+vite build clean. One environment
+(not code) fix: Playwright's cache had lost its ffmpeg helper since #10
+(version bump) and all 6 e2e failed before any page opened —
+`npx playwright install ffmpeg` restored 6/6. NB the e2e config's
+webServer invokes `uv` (absent on this machine); servers were pre-started
+manually and reused, as before.
+
+**Every-button runthrough (mock server, BUILT bundle):** club dialog all
+24 clubs; theme both ways; LH/RH — same shot's path letters flipped
+O-I↔I-O live; unit toggle converts value AND tour ref together
+(96.3 mph→155.0 km/h, TOUR 120→193); mode picker round trip (speed face
+club-only with max/avg, flip back shows last real ball shot); club change
+auto-clears tracer; tracer ALL/5/LAST/CLEAR/fold (CLEAR self-disables
+when empty); Stats swing bucket separate (A10-2 visible live), emptied
+club tab removes itself; ledger pagination rails, swing rows dashed,
+delete-to-empty-page clamps, deleting the session max recomputed max DOWN
+(153.7→151.1); Save Session; camera not-available; Simulate on Debug
+(mock-only), Tuning disabled in mock; shutdown Cancel; /display route;
+Launch Daddy activates + survives a shot; 375 px both themes, zero
+horizontal overflow. **Noise: console 0 errors/0 warnings; server log 0
+tracebacks across the whole session (T-1 shim holding); only non-200 the
+designed camera 503; all assets local (fonts self-hosted).**
+
+### Same-session addendum: A11-4 — envelope low-pass corner 400 → 700 Hz (the wedge-spin observation, closed)
+
+Johnny's brief: "what if we raised it to 425? this is all arbitrary...
+if the benefits outweigh the cost for a start up run then lets do it"
+(the engine-break-in-tune philosophy: favor observability now, tighten
+against bench data later). Also asked: 2nd harmonic at 12,000 rpm?
+(= 2×200 Hz = **exactly the old corner** — and `filtfilt`'s double pass
+makes the corner −6 dB, so a 12k wedge's 2nd harmonic survived at 50%
+amplitude, with effectively 8th-order rolloff beyond) — and whether a
+ball-speed-gated corner (<80 mph → 500 Hz) would work.
+
+Measured before deciding (corner ∈ {400, 425, 500, 700} × speeds ×
+spins 2.6–12.5k × noise × marker × 3 seeds, through the REAL decode
+chain with only the corner parameterized). **Round 1 exposed a
+simulator gap first**: the standard synth's spin modulation is a pure
+cosine — no harmonics exist to lose, every corner measured identical.
+Round 2 used pulse-shaped glints (gaussian, σ = 8% of period — the
+physical once-per-rev pulse the tap-along scorer was designed for) and
+the repo's own missing-fundamental stress shape. Results: accuracy
+100% with **0 octave errors at every corner**; confidence in the
+harmonic-dependent high-spin class rose 0.87 (400) → 0.89 (425) → 0.94
+(500) → **1.00 (700)**, while low-spin confidence cost ≤0.02 (the
++75% noise bandwidth, measured not feared). 425 was measurably not
+worth a commit; the non-arbitrary sizes are 500 (2nd harmonic covers
+the full band) and 700 (= 3×220 + margin, full comb everywhere).
+
+**Adopted: static 700 Hz** (`ENV_LP_CORNER_HZ`, `demodulate(corner_hz=)`
+parameterized). The speed gate was REJECTED for the startup tune:
+conditional behavior muddies rung-4 attribution, and its only remaining
+virtue is the last ~0.02 of low-spin confidence — recorded here as the
+production refinement if bench data ever shows the wide corner costing
+real reads. Club-tone clearance verified for 700: demodulated club
+residuals land <140 Hz (chips — inside the old corner anyway) or
+>860 Hz (all faster shots); 700 newly admits no club energy in any
+regime. Verified after the change: selftest bit-identical PASS, spin
+sim standard + missing-fundamental + sweep all at historical values,
+dirt battery 15/15. Rung-4 note: the drill rig should sweep 8–12k rpm
+and confirm the wide corner's noise cost stays negligible at real SNR;
+the simulator's cosine-only modulation (a `--glint` pulse shape would
+make the harmonic machinery regression-testable in-repo) is left as an
+optional instrument upgrade.
+
+**Observations recorded, not fixed (no defect claimed):**
+- Console carries a few plain `console.log` lines ("Session state
+  received", "Connected to server") — inside audit #8's zero
+  errors/warnings rule, not literally silent.
+- Launch Daddy's 5-tap appears one-way until reload (only
+  activate-and-survive was ever asserted, audit #8); nothing persists
+  across reload by design, so refresh clears it.
+- Browser-pane tooling quirk, not app: automated scroll gestures time out
+  on the Live face because the tracer's rAF loop never idles; the page
+  itself stays fully responsive (verified via JS).
 
 ---
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit #9 (T-series) dirt battery — LM-2 acquisition side.
+"""Audit #9 (T-series) dirt battery — LM acquisition side.
 
 Graduated from the audit-#9 scratchpad into the standing verification
 loop (see HANDOFF §3): every probe here caught, or fences, a real

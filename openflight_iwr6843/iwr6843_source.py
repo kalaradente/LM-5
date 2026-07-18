@@ -590,7 +590,9 @@ class IWR6843Source:
     #           follow-through carries it up/back (range stalls, reverses).
     # So: cluster points into tracks by spatial continuity, classify tracks
     # by range-gain + monotonicity, fit ONLY the ball track, and read club
-    # speed off the club track in the 50 ms before the ball is born. A
+    # speed off the club track in the 30 ms before the ball is born
+    # (the candidate window in analyze(); comment corrected in audit #11
+    # -- it said 50 ms while the code has always gated at 0.03 s). A
     # practice swing produces no ball-like track -> no shot (the old code
     # could report a phantom shot from club points alone).
 

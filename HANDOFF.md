@@ -1,7 +1,7 @@
-# LM-2 — Session Handoff / State of Affairs
+# LM (current version: LM-5) — Session Handoff / State of Affairs
 
-_Written 2026-07-04, last updated 2026-07-08 (after audit #9, the
-top-down T-series dirt audit). Read this first, then
+_Written 2026-07-04, last updated 2026-07-17 (after audit #11, the
+full top-down code+logic+runthrough audit). Read this first, then
 `openflight_iwr6843/docs/audit-log.md` (the running audit record —
 REQUIRED reading before assuming anything about open issues), `TODO.md`,
 `openflight_iwr6843/docs/hardware-physics-limits.md` (the honest
@@ -34,12 +34,23 @@ until the parts arrive.
 
 ---
 
-## 2. Repo layout — TWO repos, read this carefully
+## 2. Naming + repo layout — read this carefully
 
-- **LM-2** (`~/Desktop/LM-2`, github.com/kalaradente/LM-2, **public**,
-  AGPL-3.0) — **the only actively-updated repo.** All new work goes here.
+**Nomenclature (Johnny's scheme, 2026-07-17): the project is "LM"; the
+`-x` suffix is the version we're working on. The current version is
+LM-5.** Generic self-references in living docs say "LM"; the current
+version is named where a version is meant; historical audit-log prose
+keeps whatever name was accurate at the time.
+
+- **LM-5** (github.com/kalaradente/LM-5, **public**, AGPL-3.0) — the
+  current version's published repo.
+- **LM-2** (github.com/kalaradente/LM-2) — the development mirror the
+  current version grew from. **Same tree, bit-identical**: the local
+  working copy at `~/Desktop/LM-2` has `origin` = LM-2 and a second
+  remote `lm5` = LM-5; pushes go to BOTH ("the LM-2 + LM-5 push"). All
+  new work happens in this one working copy.
 - **LM-1** (`~/Desktop/OPENFLIGHT`, github.com/kalaradente/LM-1) — **frozen
-  snapshot** of where LM-2 branched from. Do NOT modify it. (Note its local
+  snapshot** of where the line branched. Do NOT modify it. (Note its local
   working tree is dirty from a parallel session; that's expected, ignore it.
   Its committed state is the real LM-1.)
 
@@ -52,8 +63,8 @@ the new commit first), applies our patches (`patches/`, glob order:
 `session_mode` → `simulate_custom_shot` → `ui_redesign`), then
 `npm install && npm run build`s the UI (the server serves `ui/dist`;
 without the build the Pi serves a stale bundle). On a dev machine,
-**clone fresh from GitHub inside LM-2 and check out the pin** (Johnny's
-rule, audit #9):
+**clone fresh from GitHub inside the working tree (`~/Desktop/LM-2`) and
+check out the pin** (Johnny's rule, audit #9):
 `git clone https://github.com/jewbetcha/openflight.git openflight_upstream`
 then `git -C openflight_upstream checkout <UPSTREAM_COMMIT>` — do NOT
 symlink or copy LM-1's local clone; its snapshot drifts from what the
@@ -418,7 +429,8 @@ a fresh session must carry:
   publishing garbage anyway). Floor statement now: 17 mph = 100%,
   14 mph ~67–80%. Full detail: audit log T-14 addendum.
 - Also authored same session: **systemd auto-start** (wizard step 9,
-  `openflight-lm2.service` — boot-order test is Pi-gated) and the
+  `openflight-lm.service` (authored as `-lm2`, renamed version-agnostic
+  in the 2026-07-17 nomenclature pass) — boot-order test is Pi-gated) and the
   chip-instrumentation method notes live in the T-14 entry.
 
 ## 7d. Audit #10 (A-series, 2026-07-09) — post-publish sanity check
@@ -440,6 +452,30 @@ findings, both fixed and re-verified; everything else verified good.
   delete garbage-inert + stats recompute + page clamp, chip gate 1/220
   unchanged, Save-is-the-only-persistence. Full detail: audit-log #10.
 
+## 7e. Audit #11 (2026-07-16/17) — full top-down + every-button runthrough
+
+Code+logic sanity over the whole LM acquisition layer (RF math re-derived, gate
+algebra checked), full battery (945 Python + 57 UI + 6 e2e, sweep 0,
+dirt battery 15/15 — counts identical to #10), and a live every-button
+press of the built bundle: console 0 errors/warnings, server 0
+tracebacks. Two findings, both fixed: **A11-1 (MED)** —
+`golf-outdoor.cfg` still said `clutterRemoval -1 1` (pre-V-6 leftover;
+runtime-masked by `_apply_session`, but raw cfg streaming at bring-up
+would have restored the ~124 mph fold-to-zero dead band outdoors) — now
+`-1 0` + comment; **A11-2 (LOW)** — F-7 comment said 50 ms club window,
+code has always been 30 ms. **Standing advisory A11-3: upstream HEAD
+drifted (f51a546); pin still applies clean; rebase + full re-verify +
+pin bump is due as a deliberate work item.** Same-session addendum
+**A11-4**: the spin decoder's post-demod envelope low-pass was raised
+400 → 700 Hz (`ENV_LP_CORNER_HZ`) — the old corner halved the 2nd
+harmonic at 12,000 rpm and cut the 3rd above ~8,000, degrading the
+tap-along scorer exactly at wedge spins; measured across corners with
+pulse-glint + missing-fundamental modulation: high-spin confidence
+0.87→1.00, low-spin cost ≤0.02, 0 octave errors, club-tone clearance
+holds. A ball-speed-gated corner was considered and rejected for the
+startup tune (recorded in the log as a production option). Full detail:
+audit-log #11 + A11-4.
+
 ## 8. The bring-up ladder (the plan for when hardware arrives)
 
 0. Flash IWR6843 firmware on **Windows** via Uniflash (see
@@ -452,7 +488,7 @@ findings, both fixed and re-verified; everything else verified good.
    drill-spun ball at known RPM via `spin_decoder --bench`.
 5. Real swings; validate against a truth unit (`validate.py`).
 
-Then on the Pi: `git clone` LM-2 → `./scripts/setup_wizard.sh` →
+Then on the Pi: `git clone` LM-5 → `./scripts/setup_wizard.sh` →
 `python3 run_iwr6843.py --ballistics`.
 
 ---

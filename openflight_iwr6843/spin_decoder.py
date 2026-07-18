@@ -46,6 +46,25 @@ CARRIER_BAND = (1_223.0, 16_000.0)     # Hz: plausible ball tones (outbound).
                                         # above real shots. DC output (0-500kHz)
                                         # covers the whole band. See session.py.
 MIN_TRACK_FRAMES = 4
+# Post-demodulation envelope low-pass corner (audit #11 / A11-4).
+# History: this was 400 Hz, implicitly sized at driver/iron spins where
+# all three tap-along harmonics fit under ~300 Hz. But SPIN_BAND tops at
+# 220 Hz rotation (13,200 rpm), and with filtfilt's double pass the old
+# corner cut the 3rd harmonic above ~8,000 rpm and halved the 2nd at
+# 12,000 (2x200 Hz = exactly the corner) -- degrading the harmonic-sum
+# toward naive peak-picking precisely in wedge-spin territory. 700 Hz =
+# 3 x 220 + margin keeps the full comb across the whole band. Measured
+# (synthetic, pulse-glint + missing-fundamental shapes, 2026-07-17):
+# high-spin confidence 0.87 -> 1.00 (missing-fundamental class), low-spin
+# cost <= 0.02, accuracy 100%/0 octave errors at every corner tried
+# (400/425/500/700). Club-tone clearance holds: demodulated club
+# residuals sit <140 Hz (chips; inside the old corner anyway) or >860 Hz
+# (all faster shots) -- 700 newly admits no club energy. A ball-speed-
+# gated corner was considered and rejected for the startup tune
+# (conditional behavior muddies rung-4 attribution; the static number
+# already delivers the wedge benefit) -- revisit only if bench data
+# shows the wider noise bandwidth costing real low-spin confidence.
+ENV_LP_CORNER_HZ = 700.0
 
 
 MAINS_NOTCH_HZ = 60.0         # Mains hum frequency to notch out of the signal.
@@ -115,12 +134,13 @@ def track_carrier(z: np.ndarray, fs: int = FS):
     return t, f_smooth
 
 
-def demodulate(z: np.ndarray, t_c, f_c, fs: int = FS) -> np.ndarray:
+def demodulate(z: np.ndarray, t_c, f_c, fs: int = FS,
+               corner_hz: float = ENV_LP_CORNER_HZ) -> np.ndarray:
     n = np.arange(len(z)) / fs
     f_inst = np.interp(n, t_c, f_c)
     phase = 2 * np.pi * np.cumsum(f_inst) / fs
     base = z * np.exp(-1j * phase)
-    b, a = sig.butter(4, 400 / (fs / 2))
+    b, a = sig.butter(4, corner_hz / (fs / 2))
     return sig.filtfilt(b, a, base)
 
 

@@ -206,6 +206,20 @@ Running list of open items. Newest relevant item first per section.
 
 ## Software
 
+- [ ] **Upstream rebase + pin bump (SCHEDULED 2026-07-18, Johnny)** —
+      audit #11 / A11-3: upstream HEAD drifted to `f51a546`;
+      `session_mode.patch` + `ui_redesign.patch` no longer apply at HEAD
+      (pin `c623fe5` still clean — no Pi urgency). The T-3 procedure:
+      inspect the drift first, `git rebase --onto` the `old-stack`
+      branch, hunt SEMANTIC conflicts via upstream's own suite (textual
+      "applies cleanly" proves nothing — T-3's lesson), regenerate
+      `ui_redesign.patch` + bit-identity-prove it on a pristine clone of
+      the new commit, full suites + LM battery on the new base, THEN
+      bump `UPSTREAM_COMMIT` + README pin note. Fold in: rename the
+      "LM-2" comment strings inside `ui_redesign.patch` (index.css
+      header, server.py audit-citation comments) to match the LM
+      nomenclature — the patch is being regenerated anyway.
+
 - [x] **Automatic CFAR threshold -- "the compressor" (2026-07-06,
       Johnny's request, audit M-9)**: idle-scene detection density
       (points/frame, armed only -- captures never feed the sidechain)
@@ -249,7 +263,8 @@ Running list of open items. Newest relevant item first per section.
       ShotDisplay.test.tsx + a shot_to_dict round-trip check.
 
 - [~] **Auto-start OpenFlight on Pi boot** — AUTHORED 2026-07-08 (wizard
-      step 9): `openflight-lm2.service` rendered + enabled by the wizard
+      step 9): `openflight-lm.service` (version-agnostic name per the
+      2026-07-17 nomenclature pass; authored as `-lm2`) rendered + enabled by the wizard
       (opt-out prompt). After=network.target sound.target,
       WorkingDirectory=repo root, ExecStart=repo venv python
       run_iwr6843.py --ballistics (ports/audio from hardware.env as
