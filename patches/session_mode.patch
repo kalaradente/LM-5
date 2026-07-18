@@ -1,8 +1,8 @@
 diff --git a/src/openflight/server.py b/src/openflight/server.py
-index 68ae180..6089a6e 100644
+index 0d9ee32..5ef4ce4 100644
 --- a/src/openflight/server.py
 +++ b/src/openflight/server.py
-@@ -863,6 +863,10 @@ def shot_to_dict(shot: Shot) -> dict:
+@@ -885,6 +885,10 @@ def shot_to_dict(shot: Shot) -> dict:
          "carry_spin_adjusted": round(shot.carry_spin_adjusted)
          if shot.carry_spin_adjusted
          else None,
@@ -13,7 +13,7 @@ index 68ae180..6089a6e 100644
      }
  
  
-@@ -1542,6 +1546,48 @@ def handle_set_radar_config(data):
+@@ -1591,6 +1595,48 @@ def handle_set_radar_config(data):
          socketio.emit("radar_config_error", {"error": str(e)})
  
  
@@ -86,7 +86,7 @@ index 9ebc26d..9dc7fcd 100644
 +  overflow: visible;
 +}
 diff --git a/ui/src/App.tsx b/ui/src/App.tsx
-index 8487302..7fecac0 100644
+index 43bb9ea..25459e3 100644
 --- a/ui/src/App.tsx
 +++ b/ui/src/App.tsx
 @@ -16,6 +16,8 @@ import { SimStatus } from './components/SimStatus';
@@ -107,15 +107,17 @@ index 8487302..7fecac0 100644
      useShallow((state) => ({
        connected: state.connected,
        mockMode: state.mockMode,
-@@ -74,6 +76,7 @@ function AppContent() {
+@@ -74,7 +76,8 @@ function AppContent() {
        simStatuses: state.simStatuses,
        latestSimShots: state.latestSimShots,
        serverClub: state.serverClub,
+-    }))
 +      sessionMode: state.sessionMode,
-     })),
++    })),
    );
    const { latestShot, shots, isNewShot, shotVersion } = useShotStore(
-@@ -196,6 +199,7 @@ function AppContent() {
+     useShallow((state) => ({
+@@ -188,6 +191,7 @@ function AppContent() {
                KMH/M
              </button>
            </div>
@@ -123,7 +125,7 @@ index 8487302..7fecac0 100644
            <ClubPicker selectedClub={selectedClub} onClubChange={handleClubChange} />
            <BallDetectionIndicator
              available={cameraStatus.available}
-@@ -280,7 +284,15 @@ function AppContent() {
+@@ -283,7 +287,15 @@ function AppContent() {
          {currentView === 'live' && (
            <div className="live-view">
              {isNewShot && <div key={shotVersion} className="shot-flash" />}
@@ -509,7 +511,7 @@ index 9e0ebc2..df7c5ce 100644
 +  font-size: clamp(0.75rem, 6cqw, 1.5rem);
 +}
 diff --git a/ui/src/components/ShotDisplay.tsx b/ui/src/components/ShotDisplay.tsx
-index b08e4ed..cd645e3 100644
+index bf34aca..cd645e3 100644
 --- a/ui/src/components/ShotDisplay.tsx
 +++ b/ui/src/components/ShotDisplay.tsx
 @@ -2,6 +2,7 @@ import { useMemo } from 'react';
@@ -598,7 +600,7 @@ index b08e4ed..cd645e3 100644
    value,
    unit,
    label,
-@@ -158,94 +90,127 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
+@@ -158,90 +90,127 @@ export function ShotDisplay({ shot, animate = false }: ShotDisplayProps) {
    const hasSpin = shot.spin_rpm !== null;
    const hasLaunchAngle = shot.launch_angle_vertical !== null;
  
@@ -797,11 +799,7 @@ index b08e4ed..cd645e3 100644
 -            unit={hasSpin ? 'rpm' : undefined}
 -            label="Spin Rate"
 -            subtext={
--              hasSpin && shot.spin_source
--                ? shot.spin_source === 'calculated'
--                  ? 'estimated'
--                  : 'radar'
--                : undefined
+-              hasSpin && shot.spin_source ? (shot.spin_source === 'calculated' ? 'estimated' : 'radar') : undefined
 -            }
 -            variant="spin"
 -            confidence={hasSpin ? shot.spin_quality : null}
@@ -813,7 +811,7 @@ index b08e4ed..cd645e3 100644
    );
  }
 diff --git a/ui/src/components/ShotList.tsx b/ui/src/components/ShotList.tsx
-index 8bdd1fa..e2dd911 100644
+index cfc9f1c..bfa726b 100644
 --- a/ui/src/components/ShotList.tsx
 +++ b/ui/src/components/ShotList.tsx
 @@ -19,12 +19,16 @@ interface ShotRowProps {
@@ -835,16 +833,20 @@ index 8bdd1fa..e2dd911 100644
          <span className="shot-row__label">ball</span>
        </span>
        <span className="shot-row__stat">
-@@ -32,15 +36,15 @@ const ShotRow = memo(function ShotRow({ shot, shotNumber, unitSystem, distanceUn
+@@ -34,19 +38,15 @@ const ShotRow = memo(function ShotRow({ shot, shotNumber, unitSystem, distanceUn
          <span className="shot-row__label">club</span>
        </span>
        <span className="shot-row__stat">
--        <span className="shot-row__value">{shot.launch_angle_vertical !== null ? `${shot.launch_angle_vertical.toFixed(1)}°` : '—'}</span>
+-        <span className="shot-row__value">
+-          {shot.launch_angle_vertical !== null ? `${shot.launch_angle_vertical.toFixed(1)}°` : '—'}
+-        </span>
 +        <span className="shot-row__value">{!isSwing && shot.launch_angle_vertical !== null ? `${shot.launch_angle_vertical.toFixed(1)}°` : '—'}</span>
          <span className="shot-row__label">launch</span>
        </span>
        <span className="shot-row__stat">
--        <span className="shot-row__value">{shot.spin_rpm !== null ? shot.spin_rpm.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—'}</span>
+-        <span className="shot-row__value">
+-          {shot.spin_rpm !== null ? shot.spin_rpm.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—'}
+-        </span>
 +        <span className="shot-row__value">{!isSwing && shot.spin_rpm !== null ? shot.spin_rpm.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—'}</span>
          <span className="shot-row__label">spin</span>
        </span>

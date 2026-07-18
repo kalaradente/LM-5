@@ -46,7 +46,7 @@ UPSTREAM_URL="https://github.com/jewbetcha/openflight.git"
 # that day would have silently shipped the old UI (the patch loop below
 # warns-and-continues). Bump this SHA only deliberately: re-run the
 # patch stack + full suites on the new commit first, then update it.
-UPSTREAM_COMMIT="c623fe52582a351eb035cadc2c619e5c96e0cb43"
+UPSTREAM_COMMIT="f51a5464c32b7f7f129a39dad1e037b622cb832f"
 NEED_REBOOT=0
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'

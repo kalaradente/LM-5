@@ -70,7 +70,7 @@ then `git -C openflight_upstream checkout <UPSTREAM_COMMIT>` — do NOT
 symlink or copy LM-1's local clone; its snapshot drifts from what the
 wizard actually fetches, and that exact drift hid T-3 from two audits.
 (The current dev checkout keeps the verified stack on its `old-stack`
-branch; `git diff 395b91b old-stack --binary` regenerates
+branch; `git diff 7cb196a old-stack --binary` regenerates
 `ui_redesign.patch`.)
 
 ---
@@ -463,9 +463,16 @@ tracebacks. Two findings, both fixed: **A11-1 (MED)** —
 runtime-masked by `_apply_session`, but raw cfg streaming at bring-up
 would have restored the ~124 mph fold-to-zero dead band outdoors) — now
 `-1 0` + comment; **A11-2 (LOW)** — F-7 comment said 50 ms club window,
-code has always been 30 ms. **Standing advisory A11-3: upstream HEAD
-drifted (f51a546); pin still applies clean; rebase + full re-verify +
-pin bump is due as a deliberate work item.** Same-session addendum
+code has always been 30 ms. **A11-3 CLOSED 2026-07-18: the stack was
+rebased onto upstream HEAD `f51a546` (drift was PR #150 — UI reformat +
+format-check CI + node-version pin; no logic). Conflicts were
+formatting-only, resolved as our-content-in-their-formatting; upstream's
+full suite on the rebased tree found zero semantic conflicts (945+57+6
+green); `session_mode.patch` + `ui_redesign.patch` regenerated (the LM
+comment renames folded into ui_redesign while it was open) and the
+stack proven BIT-IDENTICAL by git tree hash on a virgin GitHub clone at
+the new pin; `UPSTREAM_COMMIT` bumped to `f51a5464c32...`. Bench
+regeneration command is now `git diff 7cb196a old-stack --binary`.** Same-session addendum
 **A11-4**: the spin decoder's post-demod envelope low-pass was raised
 400 → 700 Hz (`ENV_LP_CORNER_HZ`) — the old corner halved the 2nd
 harmonic at 12,000 rpm and cut the 3rd above ~8,000, degrading the

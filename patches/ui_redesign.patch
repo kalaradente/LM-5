@@ -154,14 +154,14 @@ index f3ddd8a..f7498df 100644
      "H7": ClubType.HYBRID_7,
      "H9": ClubType.HYBRID_9,
 diff --git a/src/openflight/kld7/two_ray.py b/src/openflight/kld7/two_ray.py
-index 9c6886c..815d0bc 100644
+index 9c6886c..535350d 100644
 --- a/src/openflight/kld7/two_ray.py
 +++ b/src/openflight/kld7/two_ray.py
 @@ -155,10 +155,18 @@ TIER2_BOOST_CONFIDENCE = 0.35
  # intentionally absent -> _tier_config_for returns None -> geometry fallback.
  _TOUR_LAUNCH_DEG: "dict[ClubType, float]" = {
      ClubType.DRIVER: 10.4,
-+    # Clubs added by the LM-2 ui_redesign patch, interpolated along the same
++    # Clubs added by the LM ui_redesign patch, interpolated along the same
 +    # trend as this table's other unpublished clubs: mini driver sits between
 +    # driver (10.4) and 3w (9.3) in loft; 9w continues the wood ramp
 +    # (+1.5/step from 5w->7w); 2H/4H extend the hybrid ramp (~0.7/step).
@@ -177,7 +177,7 @@ index 9c6886c..815d0bc 100644
      ClubType.HYBRID_7: 13.0,
      ClubType.HYBRID_9: 15.0,
 diff --git a/src/openflight/launch_monitor.py b/src/openflight/launch_monitor.py
-index 4630ae0..53aa083 100644
+index 4630ae0..3cdc8b2 100644
 --- a/src/openflight/launch_monitor.py
 +++ b/src/openflight/launch_monitor.py
 @@ -21,10 +21,14 @@ class ClubType(Enum):
@@ -215,7 +215,7 @@ index 4630ae0..53aa083 100644
      club_path_deg: Optional[float] = None  # Club path from K-LD7 (horizontal)
      spin_axis_deg: Optional[float] = None  # Spin axis tilt: 0=backspin, +right(fade), -left(draw)
 +    # Radar-measured distance to the ball AT REST before the shot (meters),
-+    # from the LM-2 teed-ball auto-detection (audit M-7). Best-effort: None
++    # from the LM teed-ball auto-detection (audit M-7). Best-effort: None
 +    # whenever no lock formed, which downstream must treat as normal.
 +    tee_range_m: Optional[float] = None
 +    # Downsampled ballistic flight path for the UI tracer, attached by the
@@ -226,7 +226,7 @@ index 4630ae0..53aa083 100644
      @property
      def ball_speed_ms(self) -> float:
 diff --git a/src/openflight/server.py b/src/openflight/server.py
-index 5ef4ce4..60ad622 100644
+index 5ef4ce4..45e0132 100644
 --- a/src/openflight/server.py
 +++ b/src/openflight/server.py
 @@ -6,6 +6,7 @@ Provides real-time shot data to the web frontend via Flask-SocketIO.
@@ -242,7 +242,7 @@ index 5ef4ce4..60ad622 100644
  socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
  
 +
-+# WebSocket-close shim (LM-2 audit T-1): engineio's SimpleWebSocketWSGI
++# WebSocket-close shim (LM audit T-1): engineio's SimpleWebSocketWSGI
 +# handles a hijacked websocket and then RETURNS without ever calling
 +# start_response; werkzeug >= 3.1 asserts on that ("write() before
 +# start_response"), so every client disconnect/page-nav logged an 11-line
@@ -315,7 +315,7 @@ index 5ef4ce4..60ad622 100644
 +    ignored, never crash the worker. On success every client resyncs via
 +    the same session_state broadcast get_session uses -- stats recompute
 +    included. Deleting from the SESSION does not touch the acquisition
-+    layer's local capture archives (LM-2's captures/ dashcam) -- those are
++    layer's local capture archives (LM's captures/ dashcam) -- those are
 +    tuning evidence, not session display state."""
 +    ts = data.get("timestamp") if isinstance(data, dict) else None
 +    if not monitor or not isinstance(ts, str) or not ts:
@@ -655,7 +655,7 @@ index 5ef4ce4..60ad622 100644
 -            "avg_carry_est": statistics.mean([s.estimated_carry_yards for s in self._shots]),
 +        """Get session statistics.
 +
-+        Speed-training SWINGS are kept OUT of the ball aggregates (LM-2
++        Speed-training SWINGS are kept OUT of the ball aggregates (LM
 +        audit #10 / A10-2 — brought to parity with IWR6843Monitor's own
 +        get_session_stats, audit M-1/M-6): a swing's ball_speed is a
 +        structural 0.0, so counting it craters min/avg ball speed and
@@ -1665,7 +1665,7 @@ index 9dc7fcd..e3d6b38 100644
 -  overflow: visible;
 -}
 diff --git a/ui/src/App.tsx b/ui/src/App.tsx
-index 7fecac0..6dcdc37 100644
+index 25459e3..64308cf 100644
 --- a/ui/src/App.tsx
 +++ b/ui/src/App.tsx
 @@ -18,15 +18,17 @@ import { ClubPicker } from './components/ClubPicker';
@@ -1687,16 +1687,19 @@ index 7fecac0..6dcdc37 100644
  
  import Logo from './logo/Logo';
  
-@@ -116,6 +118,8 @@ function AppContent() {
+@@ -116,7 +118,10 @@ function AppContent() {
    const [showShutdown, setShowShutdown] = useState(false);
    const { isLaunchDaddyMode, isExploding, triggerExplosion, handleSecretTap } = useLaunchDaddy();
    const { unitSystem, setUnitSystem } = useUnitPreference();
+-  const isDisplayRoute = typeof window !== 'undefined' && window.location.pathname.replace(/\/$/, '') === '/display';
 +  const { theme, setTheme } = useThemePreference();
 +  const { handedness, setHandedness } = useHandednessPreference();
-   const isDisplayRoute =
-     typeof window !== 'undefined' && window.location.pathname.replace(/\/$/, '') === '/display';
++  const isDisplayRoute =
++    typeof window !== 'undefined' && window.location.pathname.replace(/\/$/, '') === '/display';
  
-@@ -132,6 +136,14 @@ function AppContent() {
+   // Trigger explosion when a new shot is detected in Launch Daddy mode
+   useEffect(() => {
+@@ -131,6 +136,14 @@ function AppContent() {
      socketService.setClub(club);
    };
  
@@ -1709,9 +1712,9 @@ index 7fecac0..6dcdc37 100644
 +      : latestShot;
 +
    if (isDisplayRoute) {
-     return (
-       <DisplayMode
-@@ -156,51 +168,96 @@ function AppContent() {
+     return <DisplayMode connected={connected} cameraStatus={cameraStatus} latestShot={latestShot} shots={shots} />;
+   }
+@@ -148,51 +161,96 @@ function AppContent() {
          />
        )}
  
@@ -1839,17 +1842,22 @@ index 7fecac0..6dcdc37 100644
            <BallDetectionIndicator
              available={cameraStatus.available}
              enabled={cameraStatus.enabled}
-@@ -209,23 +266,12 @@ function AppContent() {
+@@ -201,28 +259,12 @@ function AppContent() {
              onToggle={() => socketService.toggleCamera()}
            />
            <SimStatus statuses={simStatuses} />
 -          <ConnectionStatus connected={connected} />
--          <button
--            className="power-button"
--            onClick={() => setShowShutdown(true)}
--            title="Shut down"
--          >
--            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="20" height="20">
+-          <button className="power-button" onClick={() => setShowShutdown(true)} title="Shut down">
+-            <svg
+-              viewBox="0 0 24 24"
+-              fill="none"
+-              stroke="currentColor"
+-              strokeWidth="2"
+-              strokeLinecap="round"
+-              strokeLinejoin="round"
+-              width="20"
+-              height="20"
+-            >
 -              <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
 -              <line x1="12" y1="2" x2="12" y2="12" />
 -            </svg>
@@ -1863,8 +1871,8 @@ index 7fecac0..6dcdc37 100644
 +          <div className="shutdown-dialog" role="alertdialog" aria-modal="true" aria-label="Confirm shutdown">
              <p>Shut down OpenFlight?</p>
              <div className="shutdown-dialog__buttons">
-               <button className="shutdown-dialog__confirm" onClick={() => { shutdown(); setShowShutdown(false); }}>
-@@ -291,21 +337,29 @@ function AppContent() {
+               <button
+@@ -294,18 +336,21 @@ function AppContent() {
              {sessionMode === 'speed' ? (
                <SwingDisplay shots={shots} latestShot={latestShot} animate={isNewShot} />
              ) : (
@@ -1891,7 +1899,11 @@ index 7fecac0..6dcdc37 100644
 -        {currentView === 'shots' && <ShotList shots={shots} />}
 +        {currentView === 'shots' && <ShotList shots={shots} onDeleteShot={(ts) => socketService.deleteShot(ts)} />}
          {currentView === 'camera' && (
-           <CameraFeed cameraStatus={cameraStatus} onToggleCamera={() => socketService.toggleCamera()} onToggleStream={() => socketService.toggleCameraStream()} />
+           <CameraFeed
+             cameraStatus={cameraStatus}
+@@ -313,6 +358,11 @@ function AppContent() {
+             onToggleStream={() => socketService.toggleCameraStream()}
+           />
          )}
 +        {currentView === 'debug' && mockMode && (
 +          <button className="simulate-button" onClick={() => socketService.simulateShot()}>
@@ -4657,10 +4669,10 @@ index cb7661b..261d504 100644
 +  color: var(--ink-muted);
  }
 diff --git a/ui/src/components/DisplayMode.css b/ui/src/components/DisplayMode.css
-index 048359e..9bdfefc 100644
+index 896ced2..9bdfefc 100644
 --- a/ui/src/components/DisplayMode.css
 +++ b/ui/src/components/DisplayMode.css
-@@ -1,273 +1,248 @@
+@@ -1,271 +1,248 @@
 +/* Display Mode — passive TV readout served at /display.
 +   Same instrument system at living-room scale: camera monitor on the
 +   left, readout stack on the right, recent-shots ticker along the foot. */
@@ -4668,9 +4680,7 @@ index 048359e..9bdfefc 100644
    min-height: 100vh;
 -  width: 100%;
 -  padding: clamp(1rem, 2vw, 2rem);
--  background:
--    radial-gradient(ellipse at top left, rgba(212, 175, 55, 0.1), transparent 38rem),
--    var(--color-bg-deep);
+-  background: radial-gradient(ellipse at top left, rgba(212, 175, 55, 0.1), transparent 38rem), var(--color-bg-deep);
 -  color: var(--text-primary);
 -  overflow: hidden;
 +  display: flex;
@@ -5075,7 +5085,7 @@ index 048359e..9bdfefc 100644
    }
  }
 diff --git a/ui/src/components/DisplayMode.tsx b/ui/src/components/DisplayMode.tsx
-index 1516a9b..8866e24 100644
+index 4f56042..d75cf5b 100644
 --- a/ui/src/components/DisplayMode.tsx
 +++ b/ui/src/components/DisplayMode.tsx
 @@ -2,8 +2,11 @@ import { useState } from 'react';
@@ -6723,7 +6733,7 @@ index 42e8f1d..e594ba5 100644
 +  border-color: var(--state-danger, #c4453a);
  }
 diff --git a/ui/src/components/ShotList.tsx b/ui/src/components/ShotList.tsx
-index e2dd911..1cff323 100644
+index bfa726b..1cff323 100644
 --- a/ui/src/components/ShotList.tsx
 +++ b/ui/src/components/ShotList.tsx
 @@ -1,14 +1,19 @@
@@ -6747,7 +6757,7 @@ index e2dd911..1cff323 100644
  }
  
  interface ShotRowProps {
-@@ -16,55 +21,98 @@ interface ShotRowProps {
+@@ -16,57 +21,98 @@ interface ShotRowProps {
    shotNumber: number;
    unitSystem: UnitSystem;
    distanceUnit: string;
@@ -6806,7 +6816,13 @@ index e2dd911..1cff323 100644
 -        <span className="shot-row__label">ball</span>
 -      </span>
 -      <span className="shot-row__stat">
--        <span className="shot-row__value">{shot.club_speed_mph ? formatSpeed(shot.club_speed_mph, unitSystem, 1) : '—'}</span>
+-        <span className="shot-row__value">
+-          {shot.club_speed_mph ? formatSpeed(shot.club_speed_mph, unitSystem, 1) : '—'}
++      {cells.map((cell) => (
++        <span className="shot-row__stat" key={cell.label}>
++          <span className="shot-row__value">{cell.value}</span>
++          <span className="shot-row__label">{cell.label}</span>
+         </span>
 -        <span className="shot-row__label">club</span>
 -      </span>
 -      <span className="shot-row__stat">
@@ -6817,11 +6833,6 @@ index e2dd911..1cff323 100644
 -        <span className="shot-row__value">{!isSwing && shot.spin_rpm !== null ? shot.spin_rpm.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—'}</span>
 -        <span className="shot-row__label">spin</span>
 -      </span>
-+      {cells.map((cell) => (
-+        <span className="shot-row__stat" key={cell.label}>
-+          <span className="shot-row__value">{cell.value}</span>
-+          <span className="shot-row__label">{cell.label}</span>
-+        </span>
 +      ))}
        <span className="shot-row__stat shot-row__stat--carry">
 -        <span className="shot-row__value">{isSwing ? '—' : formatDistance(shot.estimated_carry_yards, unitSystem, 0)}</span>
@@ -6869,7 +6880,7 @@ index e2dd911..1cff323 100644
  
    if (shots.length === 0) {
      return (
-@@ -76,6 +124,15 @@ export function ShotList({ shots }: ShotListProps) {
+@@ -78,6 +124,15 @@ export function ShotList({ shots }: ShotListProps) {
  
    return (
      <div className="shot-list">
@@ -6885,7 +6896,7 @@ index e2dd911..1cff323 100644
        <div className="shot-list__rows">
          {pageShots.map((shot, index) => (
            <ShotRow
-@@ -84,6 +141,8 @@ export function ShotList({ shots }: ShotListProps) {
+@@ -86,6 +141,8 @@ export function ShotList({ shots }: ShotListProps) {
              shotNumber={shots.length - startIndex - index}
              unitSystem={unitSystem}
              distanceUnit={distanceUnit}
@@ -6894,7 +6905,7 @@ index e2dd911..1cff323 100644
            />
          ))}
        </div>
-@@ -92,18 +151,18 @@ export function ShotList({ shots }: ShotListProps) {
+@@ -94,18 +151,18 @@ export function ShotList({ shots }: ShotListProps) {
          <div className="pagination">
            <button
              className="pagination__button"
@@ -7970,13 +7981,13 @@ index 0000000..24afba5
 +  return { rating: 'avg', tourValue };
 +}
 diff --git a/ui/src/index.css b/ui/src/index.css
-index cc9d5bd..9d2e335 100644
+index cc9d5bd..2bc2186 100644
 --- a/ui/src/index.css
 +++ b/ui/src/index.css
 @@ -1,5 +1,15 @@
 -/* OpenFlight - Premium Golf Tech Design System */
 -@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Outfit:wght@300;400;500;600;700&display=swap');
-+/* OpenFlight — "The Calibrated Instrument" design system (LM-2 reskin).
++/* OpenFlight — "The Calibrated Instrument" design system (LM reskin).
 +   Bench-instrument posture: one committed signal amber carrying the chrome,
 +   graphite working surfaces, mono readouts, flat structural borders.
 +   Self-hosted fonts (fontsource) so the UI renders identically offline —
@@ -8249,34 +8260,46 @@ index cc9d5bd..9d2e335 100644
 +  }
 +}
 diff --git a/ui/src/logo/Logo.tsx b/ui/src/logo/Logo.tsx
-index 4215cbc..ff8ac02 100644
+index 7cabf46..f4fe8eb 100644
 --- a/ui/src/logo/Logo.tsx
 +++ b/ui/src/logo/Logo.tsx
-@@ -9,9 +9,9 @@ interface LogoProps {
+@@ -8,11 +8,11 @@ interface LogoProps {
+ 
  function getColor(variant: LogoVariant) {
    switch (variant) {
-     case "light":
--      return "#d4af37"; // var(--color-gold)
+-    case 'light':
+-      return '#d4af37'; // var(--color-gold)
+-    case 'dark':
+-      return '##1A3617';
+-    case 'color':
++    case "light":
 +      return "#f2e9d8"; // warm off-white ink for dark surfaces
-     case "dark":
--      return "##1A3617";
++    case "dark":
 +      return "#2b2216"; // near-black warm ink (sits on the amber header band)
-     case "color":
++    case "color":
        return null;
      default:
-@@ -47,9 +47,9 @@ export default function Logo({
-     >
-       <g
-         stroke="#1A3617"
--        stroke-width="0"
--        stroke-linejoin="round"
--        stroke-linecap="round"
+       return null;
+@@ -37,8 +37,17 @@ export default function Logo({ size = 'medium', variant = 'color' }: LogoProps)
+   const logoColor = getColor(variant);
+ 
+   return (
+-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="175 90 375 320" width={logoWidth}>
+-      <g stroke="#1A3617" stroke-width="0" stroke-linejoin="round" stroke-linecap="round">
++    <svg
++      xmlns="http://www.w3.org/2000/svg"
++      viewBox="175 90 375 320"
++      width={logoWidth}
++    >
++      <g
++        stroke="#1A3617"
 +        strokeWidth="0"
 +        strokeLinejoin="round"
 +        strokeLinecap="round"
-       >
++      >
          {/* O Base / C Shape */}
          <path
+           d="M 280 150 A 100 100 0 1 1 280 350 A 100 100 0 1 1 280 150 Z M 280 190 A 60 60 0 1 0 280 310 A 60 60 0 1 0 280 190 Z"
 diff --git a/ui/src/services/socketService.ts b/ui/src/services/socketService.ts
 index caaac88..b078d8c 100644
 --- a/ui/src/services/socketService.ts

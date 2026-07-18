@@ -206,7 +206,11 @@ Running list of open items. Newest relevant item first per section.
 
 ## Software
 
-- [ ] **Upstream rebase + pin bump (SCHEDULED 2026-07-18, Johnny)** —
+- [x] **Upstream rebase + pin bump — DONE 2026-07-18** (drift was PR
+      #150, formatting-only; suites green on the new base; stack
+      bit-identical by tree hash on a virgin clone at the new pin
+      `f51a546`; LM comment renames folded in; see audit-log A11-3
+      closure for full detail). Original brief follows. —
       audit #11 / A11-3: upstream HEAD drifted to `f51a546`;
       `session_mode.patch` + `ui_redesign.patch` no longer apply at HEAD
       (pin `c623fe5` still clean — no Pi urgency). The T-3 procedure:
