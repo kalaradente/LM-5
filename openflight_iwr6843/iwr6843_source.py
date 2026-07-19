@@ -225,6 +225,20 @@ class IWR6843Source:
     # ---- bring-up --------------------------------------------------------
 
     def configure(self):
+        """Stream the chirp cfg to the chip's CLI, CHECKING each reply
+        (audit #12, A12-2). The demo answers every line with an echo +
+        "Done" or an "Error <code>" -- the old code read and DISCARDED
+        the reply, so a chip that rejected the whole cfg (SDK-version
+        arg mismatch, the documented rung-3 risk) produced zero output
+        here, and the only symptom was the S-1 dead-stream message ~2 s
+        later blaming an "unplugged sensor". Probe-proven: 31/31 lines
+        rejected -> configure() printed nothing. Now every rejection is
+        printed with the chip's reply, and a summary distinguishes the
+        three bring-up postures: all-Done (healthy), Error lines (cfg/
+        SDK mismatch -- NOT a dead sensor), and no echo at all (wrong
+        CLI port/baud -- e.g. CLI and data ports swapped). Diagnostics
+        only: the happy path behaves exactly as before."""
+        failures, silent, start_failed = 0, 0, False
         with open(self.cfg_path) as f:
             for line in f:
                 line = line.strip()
@@ -233,7 +247,40 @@ class IWR6843Source:
                 line = self._apply_session(line)
                 self.cli.write((line + "\n").encode())
                 time.sleep(0.02)
-                self.cli.read(self.cli.in_waiting or 1)
+                resp = b""
+                # Drain this line's echo; give a slow chip a few extra
+                # polls only when nothing has arrived yet (real chips
+                # answer in ms; a silent fake/wrong port costs <0.1 s/line).
+                for _ in range(5):
+                    while self.cli.in_waiting:
+                        resp += self.cli.read(self.cli.in_waiting)
+                        time.sleep(0.005)
+                    if resp:
+                        break
+                    time.sleep(0.015)
+                text = resp.decode(errors="replace")
+                if not resp:
+                    silent += 1
+                elif "Error" in text:
+                    failures += 1
+                    print(f"[iwr6843] chip REJECTED {line.split()[0]!r}: "
+                          f"{' '.join(text.split())[:120]}")
+                    if line.startswith("sensorStart"):
+                        start_failed = True
+        if failures:
+            print(f"[iwr6843] *** {failures} cfg line(s) REJECTED by the chip"
+                  + (" (including sensorStart)" if start_failed else "")
+                  + " -- the data port will stay SILENT. This is a cfg/SDK "
+                  "mismatch, NOT a dead or unplugged sensor: diff the cfg "
+                  "against the flashed SDK's demo profile (bring-up rung 3).")
+        elif silent > 25:
+            # Essentially nothing ever echoed: the CLI wiring itself is
+            # suspect -- wrong port (CLI/data swapped), wrong baud, or a
+            # board still in flashing mode (SOP switches).
+            print(f"[iwr6843] *** no CLI echo on {silent} cfg lines -- the "
+                  "chip never answered. Check: CLI vs data port swap, "
+                  "115200 baud, SOP switches in functional mode "
+                  "(docs/firmware-flashing.md).")
 
     def _apply_session(self, line: str) -> str:
         """Rewrite the three golf.cfg CLI lines that depend on the session
@@ -404,7 +451,9 @@ class IWR6843Source:
                 idle_reads += 1
                 if idle_reads > 40:
                     print("[iwr6843] data stream silent for ~2 s -- sensor "
-                          "dead/unplugged? ending acquisition")
+                          "dead/unplugged? (or the chip never started: check "
+                          "configure()'s cfg-rejection/no-echo warnings "
+                          "above, audit A12-2) -- ending acquisition")
                     return
             start = self._buf.find(MAGIC_WORD)
             if start < 0:

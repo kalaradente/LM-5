@@ -483,6 +483,26 @@ holds. A ball-speed-gated corner was considered and rejected for the
 startup tune (recorded in the log as a production option). Full detail:
 audit-log #11 + A11-4.
 
+## 7f. Audit #12 (2026-07-18) — ADC streams + decoder physics (plug-in-day check)
+
+Johnny's brief: make sure that when the radars are plugged in there
+isn't "just nothing happening and we're confused." Two probe-proven
+silent day-one killers found and fixed: **A12-1 (HIGH)** — the spin
+decoder searched positive spectral frequencies only, while the K-MC1
+datasheet leaves the ±90° I/Q direction convention unspecified — a
+literal coin flip on whether EVERY real decode would fail "no stable
+ball tone" while all synthetic tests stayed green; the ridge now
+searches both signs (dominant-side vote), radial speed is a magnitude,
+and `--selftest` proves both orientations (I/Q plug order is now a
+don't-care). **A12-2 (MED)** — `configure()` discarded the chip's CLI
+replies, so a rejected cfg (SDK arg mismatch) printed NOTHING and the
+S-1 guard then blamed a "dead sensor"; it now checks Done/Error per
+line and distinguishes healthy / cfg-rejected / silent-CLI (port swap,
+baud, SOP switches) with targeted messages. Verified good: the whole
+analog chain's paper parameters (96 kHz, float32, AC coupling, clip
+detection), physics constants, UART budget (~95% at 5 pts/frame),
+dead-channel survivability. Full detail: audit-log #12.
+
 ## 8. The bring-up ladder (the plan for when hardware arrives)
 
 0. Flash IWR6843 firmware on **Windows** via Uniflash (see

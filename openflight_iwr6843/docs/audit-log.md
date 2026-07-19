@@ -28,6 +28,51 @@ flight engine lives at `~/Desktop/datasheets/pgatourstats/`.
 
 ---
 
+## Audit #12 — 2026-07-18 (A-series: ADC-stream + decoder-physics plug-in-day check)
+
+Johnny's brief: "check the analog to digital conversion streams and
+sanity check the actual physics of our decoders. i want to make sure
+when i plug in the radars there isnt just nothing happening and we're
+confused." Scope: both conversion boundaries (K-MC1 analog -> ALSA
+samples; IWR6843 UART bytes -> frames) and the physics assumptions
+inside the decoders — specifically hunting silent day-one failure
+modes where hardware differs from the simulator's idealizations.
+Both findings were REPRODUCED by probe before being claimed, fixed
+same-session, and re-verified by probe + full battery.
+
+| ID | Sev | Status | Finding |
+|---|---|---|---|
+| A12-1 | **HIGH — FIXED** | **The spin decoder searched POSITIVE spectral frequencies only; the real carrier's sign is a coin flip.** `_ridge` computed a two-sided STFT then masked `f >= +1223 Hz`. But which sign a departing ball's Doppler lands on in z = I + jQ depends on (a) the K-MC1's I/Q convention — the datasheet (p6) says only "phase shifted by +90 or −90 deg, depending on the moving direction", never WHICH sign is receding — and (b) the harness (swapping the I/Q plugs mirrors the spectrum). The entire synthetic stack models outbound as positive, so every test was green while real hardware had ~50% odds of failing EVERY decode with "no stable ball tone" — spin silently reading "inferred" on every shot, forever, with geometry working fine (maximally confusing). Probe: `decode(conj(z))` failed outright on a capture whose unconjugated twin decoded at conf 1.0. Also: `kmc1-harness.md` claimed `--selftest` catches a swap — false; the selftest ran bench mode, which is envelope-only and sign-blind. Fixed: `_ridge` searches BOTH sign bands and picks the dominant side once per window by summed ridge power (per-frame union argmax could sign-flap on a real-only dead-channel signal; the single vote can't), `radial_speed_mps` reports the magnitude, `--selftest` gained a flight-mode conjugate case (both orientations must decode ~6000 rpm), and the harness doc corrected. Post-fix probe: positive / conjugate / Q-dead / I-dead all decode identically (6000 rpm, conf 1.0, v 64.3). Bench-day consequence: I/Q plug order and the ±90° convention are now DON'T-CARES for decoding (the sign could still be logged someday for direction metadata; nothing needs it). |
+| A12-2 | **MED — FIXED** | **`configure()` discarded every CLI reply — a chip that rejected the whole cfg produced ZERO output and a misleading postmortem.** The demo answers each cfg line with "Done" or "Error <code>"; the old loop read and threw the bytes away. Probe: a fake chip answering "Error -1" to all 31 lines yielded configure() printing NOTHING — the only symptom was the S-1 dead-stream message ~2 s later blaming a "dead/unplugged sensor" (wrong: the sensor is alive, the cfg was rejected — exactly what an SDK-version arg-count mismatch does, the documented rung-3 risk). Fixed: each line's echo is drained and checked; rejections print the line + the chip's reply; a summary distinguishes the three bring-up postures — all-Done (silent, happy path unchanged), Error lines ("cfg/SDK mismatch, NOT a dead sensor — diff against the flashed SDK's profile"), and no-echo-at-all ("chip never answered: CLI/data port swap, wrong baud, or SOP switches still in flashing mode"). The S-1 message now points back at these warnings. Probe matrix post-fix: healthy chip → 0 lines printed; rejecting chip → 31 rejections + summary; silent CLI → the port-swap/baud/SOP hint. Real chips answer in ms so the drain adds no startup time; a fully silent CLI costs <0.1 s/line, once. |
+
+**Verified good (no change needed):**
+- **Spin ADC stream on paper**: PCM1863 supports 96 kHz (FS legal);
+  `sounddevice.InputStream(96000, 2ch)` float32 default matches the ring
+  buffer dtype; the callback copies (no buffer aliasing); HiFiBerry
+  line-in AC coupling removes the K-MC1's Vcc/2 offset in hardware
+  (D-3/D-6); an unsupported ALSA format raises loudly at start().
+  A dead single channel (broken I or Q wire) still decodes: the
+  real-only signal has mirror images and the ridge finds one.
+- **Physics constants**: lambda = c/24.125 GHz = 0.012427 m; f_D = 2v/λ
+  consistent across decoder, simulator, and geometry confidence;
+  SPIN_BAND 25–220 Hz = 1,500–13,200 rpm; CARRIER_BAND floor 1,223 Hz
+  = exactly the 17 mph trigger; ceiling 16 kHz < 48 kHz Nyquist; the
+  spin-as-AM-sidebands model is standard micro-Doppler and the
+  tap-along comb matches its pulse physics.
+- **Geometry UART budget**: ~192 B/frame at 5 points × 454.5 Hz
+  ≈ 87 kB/s vs 92 kB/s wire (~95%) — the frame-skip warning + M-9
+  limiter own the overflow, as designed (V-6 watch item unchanged).
+- **Known-and-documented AC limits** (not findings): the 40 Hz AC corner
+  attenuates drill-rig bench spins below ~2,400 rpm (flight shots
+  unaffected); the 15 kHz AC ceiling only touches >210 mph radial.
+
+**Suites after fixes**: selftest PASS ×2 (bench + new sign-immunity),
+spin sim standard/missing-fundamental/sweep at historical values,
+geometry scenarios + sweep 0 failures, dirt battery 15/15, py_compile
+clean.
+
+---
+
 ## Audit #11 — 2026-07-16/17 (full top-down: code+logic sanity, battery, every-button runthrough)
 
 Johnny's brief: "full audit. top down. first check code AND check logic

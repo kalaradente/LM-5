@@ -24,7 +24,7 @@ part numbers, not a jumper.) Two reasons:
 | 2 | VCC | 5V from Pi header, through **ferrite bead + 10 µF ∥ 100 nF at the module** | Datasheet Note 1 wants a low-noise supply; supply rejection is −50 dB. Most Pi rail junk is low-frequency (below the spin carrier band) — the bead+caps cover the rest; mains hum is notched in software. |
 | 3 | GND | Pi GND | Common ground with the HiFiBerry. |
 | 4 | Q_AC | HiFiBerry input **right** | High-gain IF output, typical load 1 kΩ — the 20 kΩ input loads it negligibly (~0.04 dB). |
-| 5 | I_AC | HiFiBerry input **left** | I=left / Q=right is what `shot_fusion.AudioRing` assumes when building I + jQ. Swapping them flips apparent Doppler sign — the spin decoder's `--selftest` note covers catching this. |
+| 5 | I_AC | HiFiBerry input **left** | I=left / Q=right is what `shot_fusion.AudioRing` assumes when building I + jQ. Swapping them mirrors the Doppler sign — **harmless since audit #12 (A12-1)**: the decoder searches both spectral signs (the datasheet's ±90° I/Q convention never says which sign is receding, so sign-immunity is required, not optional), and `--selftest` now proves both orientations decode. |
 | 6 | VCO in | **Leave open** | 5V version has an internal 4.7 kΩ pullup; open = CW operation somewhere within 24.05–24.25 GHz (Note 3). Worst-case ±0.4% speed-scale error vs the 24.125 GHz assumed in `spin_decoder.WAVELENGTH` — bench-checkable against a truth unit; not worth extra hardware. |
 | 7/8 | I_DC / Q_DC | **Unconnected** (documented DC-fallback only) | The low-gain (0 dB) outputs "hardly enter into a saturation state" per the datasheet — this is the escape hatch if rung-4 bench captures show in-module clipping on the AC path. |
 

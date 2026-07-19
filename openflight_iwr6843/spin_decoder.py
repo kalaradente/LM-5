@@ -100,7 +100,20 @@ def load_iq(path: str, fs: int = FS) -> np.ndarray:
 
 
 def _ridge(z: np.ndarray, fs: int):
-    """Per-frame strongest tone in CARRIER_BAND (the noisy measurements)."""
+    """Per-frame strongest tone with |f| in CARRIER_BAND (the noisy
+    measurements). BOTH spectral signs are searched (audit #12, A12-1):
+    which sign a departing ball's carrier lands on in z = I + jQ depends
+    on the K-MC1's I/Q phase convention -- the datasheet says only
+    "+90 deg or -90 deg, depending on the moving direction", never which
+    is which -- AND on the harness (swapping the I/Q plugs mirrors the
+    spectrum). A positive-only band was therefore a coin flip on real
+    hardware: on the wrong side every decode failed "no stable ball
+    tone" while the whole synthetic stack (which models outbound as
+    positive) stayed green. The DOMINANT side is chosen once per window
+    by summed ridge power, then all frames read from that side -- a
+    real one-sided signal picks its true side; a real-only signal (dead
+    channel) has mirror-equal sides and either works, without the
+    frame-to-frame sign flapping a per-frame union argmax could give."""
     # Clamp to the input length (audit E-2): a truncated audio archive or a
     # tiny capture window used to hit scipy's "noverlap must be less than
     # nperseg" ValueError (scipy shrinks nperseg to len(z) but our fixed
@@ -113,11 +126,18 @@ def _ridge(z: np.ndarray, fs: int):
                        return_onesided=False)
     f = np.fft.fftshift(f)
     S = np.fft.fftshift(np.abs(S), axes=0)
-    band = (f >= CARRIER_BAND[0]) & (f <= CARRIER_BAND[1])
-    fb, Sb = f[band], S[band]
-    idx = np.argmax(Sb, axis=0)
-    peak_f = fb[idx]
-    peak_p = Sb[idx, np.arange(Sb.shape[1])]
+
+    def _side(mask):
+        fb, Sb = f[mask], S[mask]
+        idx = np.argmax(Sb, axis=0)
+        return fb[idx], Sb[idx, np.arange(Sb.shape[1])], Sb
+
+    f_pos, p_pos, S_pos = _side((f >= CARRIER_BAND[0]) & (f <= CARRIER_BAND[1]))
+    f_neg, p_neg, S_neg = _side((f <= -CARRIER_BAND[0]) & (f >= -CARRIER_BAND[1]))
+    if float(p_neg.sum()) > float(p_pos.sum()):
+        peak_f, peak_p, Sb = f_neg, p_neg, S_neg
+    else:
+        peak_f, peak_p, Sb = f_pos, p_pos, S_pos
     floor = np.median(Sb)
     ok = peak_p > 6.0 * floor
     return t[ok], peak_f[ok]
@@ -232,7 +252,9 @@ def decode(z: np.ndarray, fs: int = FS, bench: bool = False) -> dict:
     resid = demodulate(z, t_c, f_c, fs)
     rpm, conf = spin_from_residual(resid, fs)
     return {"ok": rpm is not None, "spin_rpm": rpm, "confidence": conf,
-            "radial_speed_mps": round(float(np.median(f_c)) * WAVELENGTH / 2, 1),
+            # abs(): with the sign-immune ridge (A12-1) the tracked carrier
+            # can legitimately be negative-frequency; speed is a magnitude.
+            "radial_speed_mps": round(abs(float(np.median(f_c))) * WAVELENGTH / 2, 1),
             "dwell_ms": round(1000 * float(t_c[-1] - t_c[0]), 1),
             "mode": "flight"}
 
@@ -253,5 +275,24 @@ if __name__ == "__main__":
         print(f"[selftest] decoded {r.get('spin_rpm')} rpm "
               f"(expected ~3000), confidence {r.get('confidence')} "
               f"-> {'PASS' if ok else 'FAIL — check wiring/gain/I-Q swap'}")
-        sys.exit(0 if ok else 1)
+        # Flight-mode SIGN-IMMUNITY check (audit #12, A12-1): the K-MC1's
+        # I/Q phase convention ("+90 or -90 deg depending on direction",
+        # datasheet, which-is-which unspecified) and any I/Q plug swap
+        # decide which spectral sign the real carrier lands on. Both
+        # orientations must decode identically, or half the possible
+        # harnesses read "no stable ball tone" on every real shot.
+        rng = np.random.default_rng(2)
+        flight = ((1 + 0.3 * np.cos(2 * np.pi * 100 * t))
+                  * np.exp(1j * 2 * np.pi * 6000 * t))
+        flight += 0.1 * (rng.standard_normal(len(t))
+                         + 1j * rng.standard_normal(len(t)))
+        ra, rb = decode(flight), decode(np.conj(flight))
+        ok2 = (ra["ok"] and rb["ok"]
+               and abs(ra["spin_rpm"] - 6000) < 150
+               and abs(rb["spin_rpm"] - 6000) < 150)
+        print(f"[selftest] sign immunity: +f {ra.get('spin_rpm') and round(ra['spin_rpm'])} rpm / "
+              f"-f {rb.get('spin_rpm') and round(rb['spin_rpm'])} rpm "
+              f"(expected ~6000 both) -> "
+              f"{'PASS' if ok2 else 'FAIL — carrier search not sign-immune'}")
+        sys.exit(0 if ok and ok2 else 1)
     print(decode(load_iq(sys.argv[1]), bench="--bench" in sys.argv))
