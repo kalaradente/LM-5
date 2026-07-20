@@ -40,6 +40,9 @@ Running list of open items. Newest relevant item first per section.
       choice** (2026-07-05) — found a case that fits the active cooler on
       top with the Pi and HAT still stacked normally. No tall header or
       side-by-side GPIO ribbon workaround needed.
+      **⚠ The specific case MODEL was never recorded** (noticed during
+      the 2026-07-19 order prep) — when ordering, pin the actual
+      make/model here so the build doc is reproducible.
 
 - [x] **Physical sensor mounting decided** (2026-07-05, see
       `openflight_iwr6843/docs/mounting.md` + `mounting-plate.svg` for the

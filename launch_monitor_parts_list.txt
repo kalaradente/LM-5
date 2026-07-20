@@ -24,7 +24,7 @@ items (pick any well-reviewed option matching the spec).
 | 5 | Pi 5 active cooler or fan case | ~$10 | [Amazon search](https://www.amazon.com/s?k=raspberry+pi+5+active+cooler) |
 | 6 | High-endurance microSD, 64GB+ | ~$12 | [Amazon search](https://www.amazon.com/s?k=high+endurance+microsd+64gb) |
 | 7 | HiFiBerry DAC2 ADC Pro (stereo 3.5mm line-in) | ~$65 | [HiFiBerry shop](https://www.hifiberry.com/shop/) — pick "DAC2 ADC Pro" (current-gen; same overlay/PGA range as the older DAC+ ADC Pro, but Pi 5 needs `force_eeprom_read=0` added alongside the dtoverlay -- see scripts/setup_wizard.sh) |
-| 8 | Extra-tall GPIO stacking header (HAT clearance) | ~$6 | [Amazon search](https://www.amazon.com/s?k=raspberry+pi+tall+stacking+gpio+header+2x20) |
+| 8 | ~~Extra-tall GPIO stacking header~~ **DROPPED** (2026-07-05: case choice fits active cooler + stacked HAT with the normal header — see TODO.md) | — | — |
 
 ## Cables + electrical
 
@@ -33,8 +33,9 @@ items (pick any well-reviewed option matching the spec).
 | 9 | 3.5mm **TRS** male-male shielded cable, 1m — I=tip, Q=ring, GND=sleeve | ~$8 | [Amazon search](https://www.amazon.com/s?k=3.5mm+trs+male+to+male+shielded+cable+1m) |
 | 10 | Snap-on ferrite choke kit, assorted bores | ~$8 | [Amazon search](https://www.amazon.com/s?k=snap+on+ferrite+choke+kit+assorted) |
 | 11 | Micro-USB cable, data-rated, 1m (Pi → ISK) | ~$7 | [Amazon search](https://www.amazon.com/s?k=micro+usb+data+cable+1m) |
-| 12 | USB battery pack, 5V (clean K-MC1 power) | ~$15 | [Amazon search](https://www.amazon.com/s?k=usb+power+bank+5v) |
+| 12 | USB battery pack, 5V — **OPTIONAL** (committed plan powers the K-MC1 from the Pi's 5V header, ~90mA — see docs/kmc1-harness.md; a bank would need a trickle mode anyway) | ~$15 | [Amazon search](https://www.amazon.com/s?k=usb+power+bank+5v) |
 | 13 | 2.54mm header pins + female crimp jumper pigtails | ~$5 | [Amazon search](https://www.amazon.com/s?k=2.54mm+header+pins+dupont+jumper+wire+kit) |
+| 13b | Through-hole ferrite beads + 10 µF and 100 nF caps (K-MC1 VCC filtering at the module, kmc1-harness pin 2) — any assortment kit | ~$10 | [Amazon search](https://www.amazon.com/s?k=ferrite+bead+through+hole+assortment) · [Amazon search](https://www.amazon.com/s?k=ceramic+electrolytic+capacitor+assortment+kit) |
 
 ## Mounting
 
@@ -87,8 +88,11 @@ items (pick any well-reviewed option matching the spec).
 4. **IWR6843ISK** → one micro-USB to the Pi (carries power + both serial ports).
 
 Both radar boards mount vertically on standoffs, antennas facing the tee,
-coplanar and aimed identically. Plate sits on rubber feet 1–1.5m behind the
-ball on the target line, front edge shimmed 10° up (matches
+coplanar and aimed identically. Plate sits on rubber feet **~2 m (5–7 ft
+supported) behind the ball** on the target line (decided 2026-07-05,
+docs/mounting.md — supersedes this file's earlier 1–1.5 m estimate; the
+M-7 placement-wiggle work measured the 5–7 ft band good), front edge
+shimmed 10° up (matches
 `IWR6843Source.MOUNT_TILT_DEG` in code -- if you build a different tilt,
 change that constant to match, or launch angle will be systematically
 wrong by roughly the tilt-vs-constant mismatch), verified level side-to-side.
